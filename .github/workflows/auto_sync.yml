@@ -1,36 +1,50 @@
 name: Automatic Google Drive Catalog Sync
 
 on:
-  schedule:
-    - cron: '0 */6 * * *'  # Backup sync every 6 hours
-  workflow_dispatch:        # Allows instant trigger via API or manual click
+  repository_dispatch:
+    types: [drive-updated]
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   sync:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
-          token: ${{ secrets.PAT_TOKEN }}
           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
       - name: Run Drive Sync Engine
-        run: python sync_drive.py
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+        run: |
+          python sync_drive.py
 
-      - name: Commit and push updated vector database & page images
+      - name: Commit and push updated vector database & images
         run: |
           git config --global user.name 'Catalog-Sync-Bot'
           git config --global user.email 'bot@github.com'
-          git add faiss_catalog.index catalog_meta.pkl catalog_pages/
-          git commit -m "Auto-updated catalog index and page images from Google Drive" || exit 0
-          git push origin main
+          git add faiss_catalog.index catalog_meta.pkl catalog_pages/ pdf_catalogs/ || true
+          
+          # Pull latest changes to prevent push rejection
+          git pull origin main --rebase
+          
+          if git status --porcelain | grep -E 'faiss_catalog|catalog_meta|catalog_pages|pdf_catalogs'; then
+            git commit -m "Auto-updated catalog index from Google Drive [skip ci]"
+            git push origin main
+          else
+            echo "No changes detected to commit."
+          fi
