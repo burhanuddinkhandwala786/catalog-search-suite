@@ -18,13 +18,11 @@ SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 
 
 def ensure_directories():
-    """Ensure output directories exist."""
     os.makedirs(PAGE_DIR, exist_ok=True)
     os.makedirs(PDF_DIR, exist_ok=True)
 
 
 def get_drive_service():
-    """Authenticates and returns Google Drive API client."""
     service_account_info = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
 
     if not service_account_info:
@@ -44,46 +42,27 @@ def get_drive_service():
         return None
 
 
-def fetch_all_pdfs_recursively(service):
-    """Paginates and fetches ALL PDF files across root and subfolders."""
-    all_files = []
-    page_token = None
-    query = "mimeType='application/pdf' and trashed=false"
-
-    while True:
-        response = service.files().list(
-            q=query,
-            fields="nextPageToken, files(id, name)",
-            pageToken=page_token
-        ).execute()
-
-        files = response.get("files", [])
-        all_files.extend(files)
-
-        page_token = response.get("nextPageToken", None)
-        if not page_token:
-            break
-
-    return all_files
-
-
 def download_pdfs_from_drive():
-    """Downloads all accessible PDF files from Drive into PDF_DIR."""
     ensure_directories()
     service = get_drive_service()
     if not service:
         print("⚠️ Skipping Drive download step.")
         return
 
-    print("☁️ Querying Google Drive for all catalog PDFs...")
+    print("☁️ Querying Google Drive for catalog PDFs...")
     try:
-        files = fetch_all_pdfs_recursively(service)
+        response = service.files().list(
+            q="mimeType='application/pdf' and trashed=false",
+            fields="files(id, name)"
+        ).execute()
+
+        files = response.get("files", [])
 
         if not files:
             print("⚠️ 0 PDF files returned by Drive API. Check Service Account permissions.")
             return
 
-        print(f"📥 Drive returned {len(files)} total PDF(s). Syncing...")
+        print(f"📥 Found {len(files)} PDF(s) in Drive. Downloading...")
 
         for f in files:
             file_id = f["id"]
@@ -100,14 +79,13 @@ def download_pdfs_from_drive():
                         _, done = downloader.next_chunk()
                 print(f"✅ Downloaded '{safe_filename}'")
             else:
-                print(f"⚡ Existing file cached: '{safe_filename}'")
+                print(f"⚡ File cached: '{safe_filename}'")
 
     except Exception as e:
         print(f"❌ Drive sync error: {e}")
 
 
 def extract_and_index_all():
-    """Extracts all downloaded PDF pages to catalog_pages/ and builds FAISS index."""
     download_pdfs_from_drive()
 
     engine = AIVectorEngine()
@@ -117,22 +95,15 @@ def extract_and_index_all():
     pdf_files = [f for f in os.listdir(PDF_DIR) if f.lower().endswith(".pdf")]
 
     if not pdf_files:
-        print(f"⚠️ No PDFs present in '{PDF_DIR}/' to index.")
-        return False
+        raise RuntimeError(f"❌ No PDFs found in '{PDF_DIR}/' to build the index! Ensure Google Drive files are shared with the Service Account.")
 
-    print(f"🔄 Processing {len(pdf_files)} total PDF catalog file(s)...")
+    print(f"🔄 Processing {len(pdf_files)} PDF catalog(s)...")
 
     for pdf_filename in sorted(pdf_files):
         pdf_path = os.path.join(PDF_DIR, pdf_filename)
         safe_name = pdf_filename.replace(" ", "_")
 
-        # Determine brand tag
-        if "godrej" in pdf_filename.lower():
-            company = "Godrej"
-        elif "viva" in pdf_filename.lower() or "hpl" in pdf_filename.lower():
-            company = "Viva"
-        else:
-            company = "General"
+        company = "Godrej" if "godrej" in pdf_filename.lower() else ("Viva" if "viva" in pdf_filename.lower() or "hpl" in pdf_filename.lower() else "General")
 
         try:
             doc = fitz.open(pdf_path)
@@ -160,7 +131,7 @@ def extract_and_index_all():
             print(f"❌ Error rendering '{pdf_filename}': {e}")
 
     if pages_to_embed:
-        print(f"⚡ Generating vector embeddings for {len(pages_to_embed)} total pages...")
+        print(f"⚡ Generating embeddings for {len(pages_to_embed)} pages...")
         embeddings = engine.get_batch_embeddings(pages_to_embed, batch_size=16)
 
         engine.create_index(embeddings, new_metadata)
@@ -169,20 +140,11 @@ def extract_and_index_all():
         with open(META_FILE, "wb") as f:
             pickle.dump(new_metadata, f)
 
-        print(f"✅ Indexing complete! Indexed {len(pages_to_embed)} total pages across {len(pdf_files)} catalogs.")
+        print(f"✅ Indexing complete! Created '{INDEX_FILE}' and '{META_FILE}'.")
         return True
 
-    return False
-
-
-def run_auto_sync():
-    """Pipeline execution wrapper."""
-    try:
-        return extract_and_index_all()
-    except Exception as e:
-        print(f"❌ Auto Sync Pipeline Failed: {e}")
-        return False
+    raise RuntimeError("❌ Failed to process page images.")
 
 
 if __name__ == "__main__":
-    run_auto_sync()
+    extract_and_index_all()
