@@ -2,8 +2,11 @@ name: Automatic Google Drive Catalog Sync
 
 on:
   schedule:
-    - cron: '0 */6 * * *'  # Runs automatically every 6 hours
-  workflow_dispatch:        # Allows 1-click manual sync from GitHub UI
+    - cron: '0 */6 * * *'  # Backup sync every 6 hours
+  workflow_dispatch:        # Allows instant trigger via API or manual click
+
+permissions:
+  contents: write           # Grants write permission to push commits
 
 jobs:
   sync:
