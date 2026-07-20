@@ -1,0 +1,33 @@
+name: Automatic Google Drive Catalog Sync
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'  # Runs automatically every 6 hours
+  workflow_dispatch:        # Allows 1-click manual sync from GitHub UI
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Drive Sync Engine
+        run: python sync_drive.py
+
+      - name: Commit updated vector database
+        run: |
+          git config --global user.name 'Catalog-Sync-Bot'
+          git config --global user.email 'bot@github.com'
+          git add faiss_catalog.index catalog_meta.pkl
+          git commit -m "Auto-updated catalog index from Google Drive" || exit 0
+          git push
