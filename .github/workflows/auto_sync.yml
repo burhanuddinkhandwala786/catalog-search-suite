@@ -33,23 +33,24 @@ jobs:
         run: |
           python sync_drive.py
 
+      - name: Clean up heavy PDFs before commit
+        run: |
+          rm -rf pdf_catalogs/
+
       - name: Commit and push updated vector database & page images
         run: |
           git config --global user.name 'Catalog-Sync-Bot'
           git config --global user.email 'bot@github.com'
           
-          # Pull latest changes first
+          # Pull latest main changes to prevent push conflicts
           git pull origin main --rebase
           
-          # Safely stage files if they exist
-          [ -f faiss_catalog.index ] && git add -f faiss_catalog.index
-          [ -f catalog_meta.pkl ] && git add -f catalog_meta.pkl
-          [ -d catalog_pages ] && git add -f catalog_pages/
-          [ -d pdf_catalogs ] && git add -f pdf_catalogs/
+          # Force add generated database & extracted page images
+          git add -f faiss_catalog.index catalog_meta.pkl catalog_pages/
           
-          if git status --porcelain | grep -E 'faiss_catalog|catalog_meta|catalog_pages|pdf_catalogs'; then
-            git commit -m "Auto-updated catalog index and page images [skip ci]"
+          if git status --porcelain | grep -E 'faiss_catalog|catalog_meta|catalog_pages'; then
+            git commit -m "Auto-updated catalog index from Google Drive [skip ci]"
             git push origin main
           else
-            echo "No changes or index files to commit."
+            echo "No changes detected to commit."
           fi
