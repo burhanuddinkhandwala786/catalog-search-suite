@@ -1,157 +1,181 @@
 import os
+import json
 import pickle
-import warnings
-import subprocess
 import faiss
-import gdown
 import fitz  # PyMuPDF
 from PIL import Image
+from google.oauth2.service_account import Credentials
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseDownload
 from core_engine import AIVectorEngine
 
-warnings.filterwarnings("ignore")
-
-COMPANY_FOLDER_IDS = {
-    "Euro Pratik": "11G38ebefaIGrLf1tA6UitQ7DCdpMn3li",
-    "Godrej": "1yOeTLCU5rDpttlzjQjo-ylumPv2U6frA",
-    "Viva": "1FXjmmY15rcowASGOD-FxnUF2ET6IV5H3",
-    "Zydex": "13auyeFy5sxjW4Ny6vni5nD91UUDD6bzf",
-}
-
-TEMP_PDF_DIR = "drive_pdfs"
 PAGE_DIR = "catalog_pages"
+PDF_DIR = "pdf_catalogs"
 INDEX_FILE = "faiss_catalog.index"
 META_FILE = "catalog_meta.pkl"
 
+# Google Drive API Scopes
+SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 
-def download_drive_folder(folder_id, target_dir):
-    folder_url = f"https://drive.google.com/drive/folders/{folder_id}"
-    rclone_path = os.path.join(os.getcwd(), "rclone.exe")
 
-    if os.path.exists(rclone_path):
-        try:
-            rclone_cmd = [
-                rclone_path, "copy",
-                ":http:", target_dir,
-                "--http-url", folder_url,
-                "--quiet"
-            ]
-            res = subprocess.run(rclone_cmd, capture_output=True)
-            if res.returncode == 0 and os.listdir(target_dir):
-                return
-        except Exception:
-            pass
+def ensure_directories():
+    """Ensure local output directories exist."""
+    os.makedirs(PAGE_DIR, exist_ok=True)
+    os.makedirs(PDF_DIR, exist_ok=True)
+
+
+def get_drive_service():
+    """Builds and returns the Google Drive API service using GitHub Secrets."""
+    service_account_info = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
+    
+    if not service_account_info:
+        # Fallback to local credentials file if running locally
+        cred_path = "credentials.json"
+        if os.path.exists(cred_path):
+            creds = Credentials.from_service_account_file(cred_path, scopes=SCOPES)
+            return build("drive", "v3", credentials=creds)
+        print("⚠️ No Google Drive credentials found in env or credentials.json.")
+        return None
 
     try:
-        gdown.download_folder(url=folder_url, output=target_dir, quiet=True, use_cookies=False)
+        info = json.loads(service_account_info)
+        creds = Credentials.from_service_account_info(info, scopes=SCOPES)
+        return build("drive", "v3", credentials=creds)
     except Exception as e:
-        print(f"  Note downloading [{target_dir}]: {e}")
+        print(f"❌ Failed to parse Service Account JSON: {e}")
+        return None
 
 
-def append_single_pdf_to_index(pdf_path, company_name, engine, index_file=INDEX_FILE, meta_file=META_FILE, page_dir=PAGE_DIR):
-    """Processes only the newly added PDF and appends its vectors directly."""
-    doc = fitz.open(pdf_path)
-    file_name = os.path.basename(pdf_path)
-    safe_name = file_name.replace(" ", "_")
+def download_pdfs_from_drive():
+    """Queries Google Drive for all PDF files and downloads new or missing ones."""
+    ensure_directories()
+    service = get_drive_service()
+    if not service:
+        print("⚠️ Skipping Drive download, scanning local 'pdf_catalogs/' folder instead.")
+        return
 
-    new_pages = []
-    new_meta = []
+    print("☁️ Querying Google Drive for PDF catalogs...")
+    try:
+        # Query all non-trashed PDF files accessible to the service account
+        query = "mimeType='application/pdf' and trashed=false"
+        results = service.files().list(q=query, fields="files(id, name)").execute()
+        files = results.get("files", [])
 
-    for page_num in range(len(doc)):
-        page = doc[page_num]
-        pix = page.get_pixmap(dpi=130)
-        page_path = os.path.join(page_dir, f"{company_name}_{safe_name}_page_{page_num+1}.jpg")
-        pix.save(page_path)
+        if not files:
+            print("⚠️ No PDF files found in accessible Google Drive folders.")
+            return
 
-        pil_img = Image.open(page_path).convert("RGB")
-        new_pages.append(pil_img)
-        new_meta.append({
-            "page_path": page_path,
-            "page": page_num + 1,
-            "catalog": file_name,
-            "company": company_name
-        })
+        print(f"📥 Found {len(files)} PDF(s) in Drive. Syncing...")
 
-    if new_pages:
-        new_embeddings = engine.get_batch_embeddings(new_pages, batch_size=16)
+        for f in files:
+            file_id = f["id"]
+            file_name = f["name"].replace(" ", "_")
+            local_pdf_path = os.path.join(PDF_DIR, file_name)
 
-        # Handle index creation vs update
-        if os.path.exists(index_file):
-            index = faiss.read_index(index_file)
-            index.add(new_embeddings)
+            # Download if file does not exist locally
+            if not os.path.exists(local_pdf_path):
+                print(f"⬇️ Downloading '{file_name}' from Drive...")
+                request = service.files().get_media(fileId=file_id)
+                with open(local_pdf_path, "wb") as fh:
+                    downloader = MediaIoBaseDownload(fh, request)
+                    done = False
+                    while not done:
+                        _, done = downloader.next_chunk()
+                print(f"✅ Downloaded '{file_name}'")
+            else:
+                print(f"⚡ File '{file_name}' already downloaded locally.")
+
+    except Exception as e:
+        print(f"❌ Error downloading PDFs from Drive: {e}")
+
+
+def extract_and_index_all():
+    """Extracts all PDF pages in PDF_DIR, normalizes paths to relative strings,
+    and rebuilds the FAISS index and metadata pickle file from scratch.
+    """
+    # Step 1: Sync all PDFs from Google Drive
+    download_pdfs_from_drive()
+
+    engine = AIVectorEngine()
+    pages_to_embed = []
+    new_metadata = []
+
+    # Step 2: Check for PDFs in the local directory
+    pdf_files = [f for f in os.listdir(PDF_DIR) if f.lower().endswith(".pdf")]
+
+    if not pdf_files:
+        print(f"⚠️ No PDF files found in '{PDF_DIR}/'.")
+        return False
+
+    print(f"🔄 Processing {len(pdf_files)} PDF catalog(s)...")
+
+    for pdf_filename in sorted(pdf_files):
+        pdf_path = os.path.join(PDF_DIR, pdf_filename)
+        safe_name = pdf_filename.replace(" ", "_")
+
+        # Determine brand tag from filename
+        if "godrej" in pdf_filename.lower():
+            company = "Godrej"
+        elif "viva" in pdf_filename.lower() or "hpl" in pdf_filename.lower():
+            company = "Viva"
         else:
-            index = engine.create_index(new_embeddings, new_meta)
+            company = "General"
 
-        # Handle metadata creation vs update
-        existing_meta = []
-        if os.path.exists(meta_file):
-            try:
-                with open(meta_file, "rb") as f:
-                    existing_meta = pickle.load(f)
-            except Exception:
-                existing_meta = []
+        try:
+            doc = fitz.open(pdf_path)
+            print(f"📖 Extracting '{pdf_filename}' ({len(doc)} pages)...")
 
-        updated_meta = existing_meta + new_meta
+            for page_num in range(len(doc)):
+                page = doc[page_num]
+                pix = page.get_pixmap(dpi=130)
 
-        # Persist to disk
-        faiss.write_index(index, index_file)
-        with open(meta_file, "wb") as f:
-            pickle.dump(updated_meta, f)
+                # Save extracted page image with clean relative path
+                img_filename = f"{safe_name}_page_{page_num + 1}.jpg"
+                rel_image_path = os.path.join(PAGE_DIR, img_filename)
+                pix.save(rel_image_path)
 
-        print(f"✅ Instantly added '{file_name}' ({len(new_pages)} pages) to live database.")
+                # Load image for visual embedding generation
+                pil_img = Image.open(rel_image_path).convert("RGB")
+                pages_to_embed.append(pil_img)
+
+                # Append clean metadata record with RELATIVE path
+                new_metadata.append(
+                    {
+                        "page_path": rel_image_path,  # E.g., 'catalog_pages/file_page_1.jpg'
+                        "page": page_num + 1,
+                        "catalog": pdf_filename,
+                        "company": company,
+                    }
+                )
+
+        except Exception as e:
+            print(f"❌ Error reading PDF '{pdf_filename}': {e}")
+
+    # Step 3: Generate vector embeddings and persist index/metadata
+    if pages_to_embed:
+        print(f"⚡ Generating vector embeddings for {len(pages_to_embed)} total pages...")
+        embeddings = engine.get_batch_embeddings(pages_to_embed, batch_size=16)
+
+        # Create fresh index and metadata
+        engine.create_index(embeddings, new_metadata)
+
+        # Save index and metadata to disk
+        faiss.write_index(engine.index, INDEX_FILE)
+        with open(META_FILE, "wb") as f:
+            pickle.dump(new_metadata, f)
+
+        print(f"✅ Successfully built fresh index ({len(pages_to_embed)} total pages)!")
+        return True
+
+    return False
 
 
 def run_auto_sync():
-    os.makedirs(TEMP_PDF_DIR, exist_ok=True)
-    os.makedirs(PAGE_DIR, exist_ok=True)
-
-    existing_metadata = []
-    indexed_catalogs = set()
-
-    if os.path.exists(META_FILE):
-        try:
-            with open(META_FILE, "rb") as f:
-                existing_metadata = pickle.load(f)
-                indexed_catalogs = set(m["catalog"] for m in existing_metadata)
-        except Exception:
-            existing_metadata = []
-
-    print("⚡ Starting Automated Catalog Synchronization...")
-
-    for company_name, folder_id in COMPANY_FOLDER_IDS.items():
-        if folder_id:
-            company_dir = os.path.join(TEMP_PDF_DIR, company_name)
-            os.makedirs(company_dir, exist_ok=True)
-            print(f"Checking updates for [{company_name}]...")
-            download_drive_folder(folder_id, company_dir)
-
-    engine = AIVectorEngine()
-    processed_any = False
-
-    for root, _, files in os.walk(TEMP_PDF_DIR):
-        for file in files:
-            if file.lower().endswith(".pdf") and file not in indexed_catalogs:
-                pdf_path = os.path.join(root, file)
-                company_name = os.path.basename(root)
-
-                print(f"--> Extracting pages from new PDF [{company_name}]: {file}...")
-                try:
-                    append_single_pdf_to_index(
-                        pdf_path=pdf_path,
-                        company_name=company_name,
-                        engine=engine,
-                        index_file=INDEX_FILE,
-                        meta_file=META_FILE,
-                        page_dir=PAGE_DIR
-                    )
-                    processed_any = True
-                except Exception as pdf_err:
-                    print(f"  [Warning] Could not parse {file}: {pdf_err}")
-
-    if processed_any:
-        print("✅ Sync completed successfully! Database updated.")
-        return True
-    else:
-        print("✅ All catalog files are up to date.")
+    """Main entry point for catalog sync pipeline."""
+    try:
+        return extract_and_index_all()
+    except Exception as e:
+        print(f"❌ Auto Sync Failed: {e}")
         return False
 
 
