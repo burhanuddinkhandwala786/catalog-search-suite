@@ -192,23 +192,23 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Helper function to dynamically extract and render PDF pages in real-time
+# Smart multi-stage image retriever
 def render_match_image(meta_dict):
     raw_path = meta_dict.get("page_path", "")
-    filename = os.path.basename(raw_path)
-    local_img_path = os.path.join("catalog_pages", filename)
+    filename = os.path.basename(raw_path) if raw_path else ""
+    local_img_path = os.path.join("catalog_pages", filename) if filename else ""
     
-    # Check if pre-extracted image exists on disk
-    if os.path.exists(local_img_path):
+    # Stage 1: Check if rendered image exists on disk
+    if local_img_path and os.path.exists(local_img_path):
         st.image(local_img_path, use_container_width=True)
         return
-    elif os.path.exists(raw_path):
+    elif raw_path and os.path.exists(raw_path):
         st.image(raw_path, use_container_width=True)
         return
 
-    # Dynamic rendering from local PDF file inside 'pdf_catalogs/'
+    # Stage 2: Check local PDF file inside pdf_catalogs/
     pdf_catalog = meta_dict.get("catalog", "")
-    page_num = meta_dict.get("page", 1) - 1  # 0-indexed for PyMuPDF
+    page_num = meta_dict.get("page", 1) - 1
     
     possible_pdf_paths = [
         os.path.join("pdf_catalogs", pdf_catalog),
@@ -218,21 +218,33 @@ def render_match_image(meta_dict):
     
     doc = None
     for pdf_p in possible_pdf_paths:
-        if os.path.exists(pdf_p):
+        if pdf_p and os.path.exists(pdf_p):
             doc = fitz.open(pdf_p)
             break
 
+    # Stage 3: Fetch PDF via Drive Link/ID if stored in metadata
+    if doc is None and "file_id" in meta_dict:
+        file_id = meta_dict["file_id"]
+        drive_url = f"https://drive.google.com/uc?export=download&id={file_id}"
+        try:
+            res = requests.get(drive_url, timeout=12)
+            if res.status_code == 200:
+                doc = fitz.open(stream=res.content, filetype="pdf")
+        except Exception:
+            pass
+
+    # Render page from PyMuPDF document if loaded
     if doc is not None:
         try:
             page = doc[page_num]
-            pix = page.get_pixmap(dpi=150)
-            img_bytes = pix.tobytes("jpg")
-            st.image(img_bytes, use_container_width=True)
+            pix = page.get_pixmap(dpi=140)
+            st.image(pix.tobytes("jpg"), use_container_width=True)
             return
         except Exception as e:
-            st.error(f"Error rendering PDF page: {e}")
-    else:
-        st.error(f"❌ PDF file `{pdf_catalog}` not found inside `pdf_catalogs/` folder in GitHub repository. Please commit the PDF files to `pdf_catalogs/`.")
+            st.warning(f"Error rendering page {page_num + 1}: {e}")
+    
+    # Graceful fallback indicator if PDF file is completely unreachable
+    st.info(f"📍 **Match Reference:** {pdf_catalog} — **Page {page_num + 1}**")
 
 # RAM Caching for DINOv2 Vector Engine
 @st.cache_resource(show_spinner="Loading Visual Recognition Engine...")
