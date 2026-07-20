@@ -8,6 +8,7 @@ import pickle
 import faiss
 import torch
 import warnings
+import requests
 from core_engine import AIVectorEngine
 from sync_drive import run_auto_sync
 
@@ -191,18 +192,47 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Helper function to dynamically locate image files across local and cloud environments
+# Helper function to render page image dynamically without needing catalog_pages folder
 def render_match_image(meta_dict):
     raw_path = meta_dict.get("page_path", "")
     filename = os.path.basename(raw_path)
-    target_path = os.path.join("catalog_pages", filename)
+    local_img_path = os.path.join("catalog_pages", filename)
     
-    if os.path.exists(target_path):
-        st.image(target_path, use_container_width=True)
+    # 1. Check if image exists locally or in repository
+    if os.path.exists(local_img_path):
+        st.image(local_img_path, use_container_width=True)
+        return
     elif os.path.exists(raw_path):
         st.image(raw_path, use_container_width=True)
+        return
+
+    # 2. Dynamic On-Demand Extraction from PDF file
+    pdf_catalog = meta_dict.get("catalog", "")
+    page_num = meta_dict.get("page", 1) - 1  # 0-indexed for PyMuPDF
+    pdf_local_path = os.path.join("pdf_catalogs", pdf_catalog)
+    
+    doc = None
+    if os.path.exists(pdf_local_path):
+        doc = fitz.open(pdf_local_path)
+    elif "pdf_url" in meta_dict and meta_dict["pdf_url"]:
+        try:
+            res = requests.get(meta_dict["pdf_url"], timeout=10)
+            if res.status_code == 200:
+                doc = fitz.open(stream=res.content, filetype="pdf")
+        except Exception:
+            pass
+
+    if doc is not None:
+        try:
+            page = doc[page_num]
+            pix = page.get_pixmap(dpi=130)
+            img_bytes = pix.tobytes("jpg")
+            st.image(img_bytes, use_container_width=True)
+            return
+        except Exception as e:
+            st.caption(f"⚠️ Error rendering page {page_num + 1}: {e}")
     else:
-        st.caption(f"⚠️ Page image `{filename}` not found in `catalog_pages/` repository folder.")
+        st.caption(f"📄 Catalog PDF `{pdf_catalog}` (Page {page_num + 1}) matched successfully.")
 
 # RAM Caching for DINOv2 Vector Engine
 @st.cache_resource(show_spinner="Loading Visual Recognition Engine...")
