@@ -18,257 +18,362 @@ torch.set_num_threads(4)
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
-    page_title="Rétina · Catalog Intelligence Engine",
-    page_icon="🟠",
+    page_title="Rétina · Catalog Search Engine",
+    page_icon="⚡",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
 
-# --- EDITORIAL LUXURY DESIGN SYSTEM ---
+# --- CUSTOM CSS STYLING ---
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;1,400&family=Plus+Jakarta+Sans:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+    @import url('https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700&display=swap');
 
-    /* Global Canvas Reset */
+    :root {
+        --bg: #0e1117;
+        --surface: #131722;
+        --surface-2: #171c28;
+        --surface-3: #1d2432;
+        --border: rgba(255,255,255,0.08);
+        --border-strong: rgba(255,255,255,0.14);
+        --text: #eef2f7;
+        --text-muted: #9aa4b2;
+        --text-faint: #6b7280;
+        --accent: #22c1a1;
+        --accent-hover: #18a78b;
+        --accent-soft: rgba(34,193,161,0.12);
+        --danger: #ff7a7a;
+        --radius-sm: 10px;
+        --radius-md: 14px;
+        --radius-lg: 18px;
+        --shadow-sm: 0 4px 16px rgba(0,0,0,0.18);
+        --shadow-md: 0 12px 32px rgba(0,0,0,0.26);
+    }
+
     html, body, [class*="css"], .stApp {
-        font-family: 'Plus Jakarta Sans', -apple-system, sans-serif !important;
-        background-color: #0b0a09 !important;
-        color: #c9c3ba !important;
+        font-family: 'Satoshi', -apple-system, BlinkMacSystemFont, sans-serif !important;
+        background:
+            radial-gradient(circle at top left, rgba(34,193,161,0.07), transparent 28%),
+            radial-gradient(circle at bottom right, rgba(34,193,161,0.04), transparent 24%),
+            var(--bg) !important;
+        color: var(--text) !important;
     }
 
-    /* Hide Default Streamlit Interface Chrome */
-    [data-testid="stSidebar"], #MainMenu, footer, header, .stDeployButton { 
-        display: none !important; 
+    [data-testid="stSidebar"], #MainMenu, footer, header, .stDeployButton {
+        display: none !important;
     }
 
-    /* Layout Container Spacing */
-    .block-container { 
-        padding-top: 1.2rem !important; 
-        padding-bottom: 2.5rem !important; 
-        max-width: 1240px !important; 
+    .block-container {
+        max-width: 1240px !important;
+        padding-top: 1.2rem !important;
+        padding-bottom: 2.5rem !important;
     }
 
-    /* Top Navigation Header Bar */
     .studio-header {
         display: flex;
         justify-content: space-between;
         align-items: center;
-        padding-bottom: 20px;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-        margin-bottom: 32px;
+        gap: 20px;
+        padding: 0 0 22px 0;
+        margin-bottom: 28px;
+        border-bottom: 1px solid var(--border);
     }
+
     .brand-mark {
-        font-family: 'Playfair Display', serif;
-        font-size: 1.55rem;
-        font-weight: 600;
-        color: #f4efe8;
         display: flex;
         align-items: center;
-        gap: 10px;
+        gap: 12px;
+        font-size: 1rem;
+        font-weight: 700;
+        color: var(--text);
         letter-spacing: -0.01em;
     }
+
     .brand-accent-dot {
-        width: 12px;
-        height: 12px;
-        background-color: #d96b43;
-        border-radius: 50%;
+        width: 10px;
+        height: 10px;
+        border-radius: 999px;
+        background: var(--accent);
+        box-shadow: 0 0 0 6px rgba(34,193,161,0.12);
         display: inline-block;
     }
+
     .status-ticker {
-        font-family: 'JetBrains Mono', monospace;
-        font-size: 0.72rem;
-        color: #8a8378;
-        letter-spacing: 0.12em;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 14px;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        background: rgba(255,255,255,0.02);
+        color: var(--text-muted);
+        font-size: 0.78rem;
+        font-weight: 600;
+        letter-spacing: 0.01em;
+    }
+
+    .section-chapter {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 12px;
+        color: var(--accent);
+        font-size: 0.75rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
         text-transform: uppercase;
     }
 
-    /* Chapter Tags & Editorial Typography */
-    .section-chapter {
-        font-family: 'JetBrains Mono', monospace;
-        font-size: 0.68rem;
-        font-weight: 500;
-        color: #d96b43;
-        letter-spacing: 0.18em;
-        text-transform: uppercase;
-        margin-bottom: 10px;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-    }
     .section-chapter::before {
-        content: '';
-        width: 16px;
+        content: "";
+        width: 18px;
         height: 1px;
-        background-color: #d96b43;
+        background: var(--accent);
+        opacity: 0.8;
     }
 
     .hero-title {
-        font-family: 'Playfair Display', serif;
-        font-size: 2.9rem;
-        font-weight: 400;
+        font-size: 2rem;
         line-height: 1.08;
-        color: #f4efe8;
-        margin-bottom: 16px;
-        letter-spacing: -0.02em;
+        font-weight: 700;
+        letter-spacing: -0.03em;
+        color: var(--text);
+        margin-bottom: 12px;
+        max-width: 10ch;
     }
+
     .hero-title em {
-        font-style: italic;
-        color: #d96b43;
+        font-style: normal;
+        color: var(--accent);
     }
 
     .hero-description {
-        font-size: 0.92rem;
-        line-height: 1.65;
-        color: #999287;
-        max-width: 520px;
-        margin-bottom: 28px;
-    }
-
-    /* Minimal Pill Tabs */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 8px;
-        background: transparent;
-        padding: 0;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        font-size: 0.98rem;
+        line-height: 1.7;
+        color: var(--text-muted);
+        max-width: 56ch;
         margin-bottom: 24px;
     }
-    .stTabs [data-baseweb="tab"] {
-        height: 42px;
-        border-radius: 0;
-        color: #8a8378;
-        font-weight: 500;
-        font-size: 0.85rem;
-        padding: 0 16px;
-        border: none !important;
-    }
-    .stTabs [aria-selected="true"] {
-        background: transparent !important;
-        color: #f4efe8 !important;
-        border-bottom: 2px solid #d96b43 !important;
+
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 8px;
+        padding: 6px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        margin-bottom: 26px;
     }
 
-    /* Dark Input Controls */
-    .stSelectbox div[data-baseweb="select"] {
-        background-color: #141210 !important;
-        border: 1px solid rgba(255, 255, 255, 0.12) !important;
-        border-radius: 6px !important;
-        color: #f4efe8 !important;
+    .stTabs [data-baseweb="tab"] {
+        height: 42px;
+        padding: 0 16px;
+        border-radius: 10px;
+        color: var(--text-muted);
+        font-size: 0.9rem;
+        font-weight: 600;
+        background: transparent !important;
+        border: none !important;
     }
+
+    .stTabs [aria-selected="true"] {
+        background: var(--surface-3) !important;
+        color: var(--text) !important;
+        box-shadow: inset 0 0 0 1px var(--border-strong);
+    }
+
     .stSelectbox label, .stFileUploader label, .stTextInput label {
-        font-family: 'JetBrains Mono', monospace !important;
-        font-size: 0.72rem !important;
-        color: #8a8378 !important;
-        letter-spacing: 0.08em !important;
-        text-transform: uppercase !alignment;
+        color: var(--text-muted) !important;
+        font-size: 0.76rem !important;
+        font-weight: 700 !important;
+        letter-spacing: 0.04em !important;
+        text-transform: uppercase !important;
+    }
+
+    .stSelectbox div[data-baseweb="select"],
+    .stTextInput input {
+        background: var(--surface) !important;
+        border: 1px solid var(--border) !important;
+        border-radius: 12px !important;
+        color: var(--text) !important;
+        min-height: 48px !important;
+    }
+
+    .stSelectbox div[data-baseweb="select"]:hover,
+    .stTextInput input:hover {
+        border-color: var(--border-strong) !important;
+    }
+
+    .stTextInput input:focus,
+    .stSelectbox div[data-baseweb="select"]:focus-within {
+        border-color: var(--accent) !important;
+        box-shadow: 0 0 0 4px var(--accent-soft) !important;
     }
 
     [data-testid="stFileUploader"] section {
-        background-color: #141210 !important;
-        border: 1px dashed rgba(255, 255, 255, 0.15) !important;
-        border-radius: 8px !important;
+        background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01)) !important;
+        border: 1px dashed rgba(255,255,255,0.16) !important;
+        border-radius: 16px !important;
+        padding: 10px !important;
     }
 
-    /* Action Buttons */
-    .stButton>button {
-        background-color: #f4efe8 !important;
-        color: #0b0a09 !important;
-        border: 1px solid #f4efe8 !important;
-        border-radius: 30px !important;
-        padding: 10px 24px !important;
-        font-family: 'Plus Jakarta Sans', sans-serif !important;
-        font-weight: 600 !important;
-        font-size: 0.85rem !important;
-        transition: all 0.2s ease !important;
-    }
-    .stButton>button:hover {
-        background-color: #ffffff !important;
-        transform: translateY(-1px) !important;
+    [data-testid="stFileUploader"] section:hover {
+        border-color: rgba(34,193,161,0.42) !important;
+        background: linear-gradient(180deg, rgba(34,193,161,0.06), rgba(255,255,255,0.02)) !important;
     }
 
-    /* Secondary Dark Action Button */
+    .stButton > button {
+        min-height: 46px !important;
+        border-radius: 12px !important;
+        border: 1px solid var(--accent) !important;
+        background: var(--accent) !important;
+        color: #08110f !important;
+        font-size: 0.92rem !important;
+        font-weight: 700 !important;
+        padding: 0 18px !important;
+        box-shadow: none !important;
+        transition: 160ms ease !important;
+    }
+
+    .stButton > button:hover {
+        background: var(--accent-hover) !important;
+        border-color: var(--accent-hover) !important;
+        transform: translateY(-1px);
+    }
+
     .btn-secondary button {
-        background-color: transparent !important;
-        color: #f4efe8 !important;
-        border: 1px solid rgba(255, 255, 255, 0.2) !important;
-    }
-    .btn-secondary button:hover {
-        border-color: #d96b43 !important;
-        color: #d96b43 !important;
+        background: transparent !important;
+        color: var(--text) !important;
+        border: 1px solid var(--border-strong) !important;
     }
 
-    /* Glass Match Result Cards */
-    .result-card {
-        background: #141210;
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        border-left: 3px solid #d96b43;
-        border-radius: 6px;
-        padding: 18px;
-        margin-bottom: 16px;
-        position: relative;
+    .btn-secondary button:hover {
+        color: var(--text) !important;
+        border-color: var(--accent) !important;
+        background: rgba(34,193,161,0.06) !important;
     }
+
+    .result-card {
+        position: relative;
+        background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        padding: 18px 18px 16px 18px;
+        margin-bottom: 14px;
+        box-shadow: var(--shadow-sm);
+    }
+
     .score-badge {
         position: absolute;
         top: 14px;
         right: 14px;
-        background-color: #d96b43;
-        color: #0b0a09;
-        font-family: 'JetBrains Mono', monospace;
-        font-size: 0.75rem;
-        font-weight: 600;
-        padding: 2px 8px;
-        border-radius: 3px;
+        padding: 6px 10px;
+        border-radius: 999px;
+        background: var(--accent-soft);
+        color: var(--accent);
+        border: 1px solid rgba(34,193,161,0.18);
+        font-size: 0.76rem;
+        font-weight: 700;
     }
 
-    /* Live Feed Sidebar Box */
     .feed-container {
-        background: #141210;
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 8px;
-        padding: 20px 24px;
+        background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+        border: 1px solid var(--border);
+        border-radius: 20px;
+        padding: 20px 22px;
+        box-shadow: var(--shadow-sm);
     }
+
     .feed-title {
         display: flex;
         justify-content: space-between;
+        align-items: center;
         padding-bottom: 14px;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-        font-family: 'JetBrains Mono', monospace;
-        font-size: 0.75rem;
-        color: #8a8378;
+        margin-bottom: 4px;
+        border-bottom: 1px solid var(--border);
+        color: var(--text-muted);
+        font-size: 0.78rem;
+        font-weight: 700;
+        letter-spacing: 0.03em;
     }
+
     .feed-row {
         display: flex;
         justify-content: space-between;
-        align-items: center;
-        padding: 14px 0;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-    }
-    .feed-row-title {
-        font-family: 'Playfair Display', serif;
-        font-size: 1.1rem;
-        color: #f4efe8;
+        align-items: flex-start;
+        gap: 16px;
+        padding: 16px 0;
+        border-bottom: 1px solid rgba(255,255,255,0.05);
     }
 
-    /* Metric Grid Counter */
+    .feed-row:last-child {
+        border-bottom: none;
+    }
+
+    .feed-row-title {
+        font-size: 0.98rem;
+        font-weight: 700;
+        color: var(--text);
+        line-height: 1.4;
+    }
+
     .metrics-container {
-        display: flex;
-        gap: 36px;
-        padding-top: 24px;
-        margin-top: 32px;
-        border-top: 1px solid rgba(255, 255, 255, 0.08);
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 14px;
+        margin-top: 28px;
+        padding-top: 0;
+        border-top: none;
     }
+
+    .metrics-container > div {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        padding: 16px 18px;
+    }
+
     .metric-value {
-        font-family: 'Playfair Display', serif;
-        font-size: 2.2rem;
-        color: #f4efe8;
+        font-size: 1.8rem;
         line-height: 1;
+        font-weight: 700;
+        color: var(--text);
+        font-variant-numeric: tabular-nums lining-nums;
     }
+
     .metric-label {
-        font-family: 'JetBrains Mono', monospace;
-        font-size: 0.68rem;
-        color: #8a8378;
-        letter-spacing: 0.12em;
+        margin-top: 8px;
+        color: var(--text-muted);
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.06em;
         text-transform: uppercase;
-        margin-top: 6px;
+    }
+
+    .stAlert {
+        border-radius: 14px !important;
+        border: 1px solid var(--border) !important;
+    }
+
+    [data-testid="stImage"] img {
+        border-radius: 16px !important;
+        border: 1px solid var(--border) !important;
+        overflow: hidden !important;
+    }
+
+    @media (max-width: 900px) {
+        .hero-title {
+            font-size: 1.7rem;
+            max-width: none;
+        }
+
+        .metrics-container {
+            grid-template-columns: 1fr;
+        }
+
+        .studio-header {
+            flex-direction: column;
+            align-items: flex-start;
+        }
     }
 </style>
 """, unsafe_allow_html=True)
@@ -307,11 +412,11 @@ PAGE_DIR = "catalog_pages"
 INDEX_FILE = "faiss_catalog.index"
 META_FILE = "catalog_meta.pkl"
 
-# Top Bar Header
+# Top Studio Header
 st.markdown("""
 <div class="studio-header">
     <div class="brand-mark">
-        <span class="brand-accent-dot"></span> Rétina.
+        <span class="brand-accent-dot"></span> Rétina
     </div>
     <div class="status-ticker">
         ● LIVE · AUTOMATED INDEXING ONLINE
@@ -347,7 +452,7 @@ with tab1:
             cropped_img = st_cropper(
                 raw_pil_img, 
                 realtime_update=True, 
-                box_color='#d96b43', 
+                box_color='#22c1a1', 
                 aspect_ratio=None
             )
             
@@ -373,8 +478,8 @@ with tab1:
                     st.markdown(f"""
                     <div class="result-card">
                         <div class="score-badge">{score_pct:.1f}%</div>
-                        <div style="font-family:'Playfair Display', serif; font-size:1.15rem; color:#f4efe8;">{res['meta']['catalog']}</div>
-                        <div style="font-size:0.8rem; color:#8a8378; margin-top:2px;">{res['meta'].get('company', 'General')} · Page {res['meta']['page']}</div>
+                        <div style="font-size:1.05rem; font-weight:700; color:var(--text);">{res['meta']['catalog']}</div>
+                        <div style="font-size:0.82rem; color:var(--text-muted); margin-top:4px;">{res['meta'].get('company', 'General')} · Page {res['meta']['page']}</div>
                     </div>
                     """, unsafe_allow_html=True)
                     if os.path.exists(res["meta"]["page_path"]):
@@ -382,9 +487,9 @@ with tab1:
             else:
                 st.warning("No matching swatches found in database.")
         else:
-            # Placeholder feed preview when no file is active
+            # Placeholder feed preview when no file is uploaded
             st.markdown('<div class="feed-container">', unsafe_allow_html=True)
-            st.markdown('<div class="feed-title"><span>/catalogs</span><span style="color:#d96b43;">● Watcher Active</span></div>', unsafe_allow_html=True)
+            st.markdown('<div class="feed-title"><span>/catalogs</span><span style="color:var(--accent);">● Watcher Active</span></div>', unsafe_allow_html=True)
             
             sample_items = [
                 ("01", "Euro Pratik · Louvers Vol. III", "128 pages", "INDEXED"),
@@ -397,11 +502,11 @@ with tab1:
                 st.markdown(f"""
                 <div class="feed-row">
                     <div>
-                        <span style="font-family:'JetBrains Mono', monospace; font-size:0.75rem; color:#645e54; margin-right:12px;">{num}</span>
+                        <span style="font-size:0.78rem; color:var(--text-faint); margin-right:12px; font-weight:700;">{num}</span>
                         <span class="feed-row-title">{title}</span>
-                        <div style="font-size:0.78rem; color:#787166; margin-top:2px;">{pages}</div>
+                        <div style="font-size:0.8rem; color:var(--text-muted); margin-top:2px;">{pages}</div>
                     </div>
-                    <span style="font-family:'JetBrains Mono', monospace; font-size:0.68rem; color:#a39c90; border:1px solid rgba(255,255,255,0.15); padding:3px 8px; border-radius:4px;">{status}</span>
+                    <span style="font-size:0.72rem; font-weight:700; color:var(--text-muted); border:1px solid var(--border); padding:4px 8px; border-radius:6px;">{status}</span>
                 </div>
                 """, unsafe_allow_html=True)
             
