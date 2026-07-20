@@ -27,10 +27,10 @@ jobs:
       - name: Run Drive Sync Engine
         run: python sync_drive.py
 
-      - name: Commit and push updated vector database
+      - name: Commit and push updated vector database & page images
         run: |
           git config --global user.name 'Catalog-Sync-Bot'
           git config --global user.email 'bot@github.com'
-          git add faiss_catalog.index catalog_meta.pkl
-          git commit -m "Auto-updated catalog index from Google Drive" || exit 0
+          git add faiss_catalog.index catalog_meta.pkl catalog_pages/
+          git commit -m "Auto-updated catalog index and page images from Google Drive" || exit 0
           git push origin main
