@@ -18,18 +18,24 @@ SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 
 
 def ensure_directories():
+    """Ensure local storage folders exist."""
     os.makedirs(PAGE_DIR, exist_ok=True)
     os.makedirs(PDF_DIR, exist_ok=True)
 
 
 def get_drive_service():
+    """Builds and returns the Google Drive API service."""
     service_account_info = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
 
     if not service_account_info:
         cred_path = "credentials.json"
         if os.path.exists(cred_path):
-            creds = Credentials.from_service_account_file(cred_path, scopes=SCOPES)
-            return build("drive", "v3", credentials=creds)
+            try:
+                creds = Credentials.from_service_account_file(cred_path, scopes=SCOPES)
+                return build("drive", "v3", credentials=creds)
+            except Exception as e:
+                print(f"⚠️ Failed to load local credentials.json: {e}")
+                return None
         print("⚠️ No credentials found in environment or credentials.json.")
         return None
 
@@ -43,10 +49,11 @@ def get_drive_service():
 
 
 def download_pdfs_from_drive():
+    """Syncs PDF files from Google Drive if service is available."""
     ensure_directories()
     service = get_drive_service()
     if not service:
-        print("⚠️ Skipping Drive download step.")
+        print("⚠️ Skipping Drive download step. Using local files in 'pdf_catalogs/'.")
         return
 
     print("☁️ Querying Google Drive for catalog PDFs...")
@@ -59,10 +66,10 @@ def download_pdfs_from_drive():
         files = response.get("files", [])
 
         if not files:
-            print("⚠️ 0 PDF files returned by Drive API. Check Service Account permissions.")
+            print("⚠️ No PDF files returned by Google Drive.")
             return
 
-        print(f"📥 Found {len(files)} PDF(s) in Drive. Downloading...")
+        print(f"📥 Found {len(files)} PDF(s) in Drive. Syncing...")
 
         for f in files:
             file_id = f["id"]
@@ -86,6 +93,10 @@ def download_pdfs_from_drive():
 
 
 def extract_and_index_all():
+    """Processes all local PDFs in pdf_catalogs/, extracts pages, and creates the index."""
+    ensure_directories()
+    
+    # Try downloading from Drive first
     download_pdfs_from_drive()
 
     engine = AIVectorEngine()
@@ -95,7 +106,8 @@ def extract_and_index_all():
     pdf_files = [f for f in os.listdir(PDF_DIR) if f.lower().endswith(".pdf")]
 
     if not pdf_files:
-        raise RuntimeError(f"❌ No PDFs found in '{PDF_DIR}/' to build the index! Ensure Google Drive files are shared with the Service Account.")
+        print(f"⚠️ No PDFs found in '{PDF_DIR}/'. Place PDF files in '{PDF_DIR}/' or connect Drive.")
+        return False
 
     print(f"🔄 Processing {len(pdf_files)} PDF catalog(s)...")
 
@@ -131,7 +143,7 @@ def extract_and_index_all():
             print(f"❌ Error rendering '{pdf_filename}': {e}")
 
     if pages_to_embed:
-        print(f"⚡ Generating embeddings for {len(pages_to_embed)} pages...")
+        print(f"⚡ Generating embeddings for {len(pages_to_embed)} total pages...")
         embeddings = engine.get_batch_embeddings(pages_to_embed, batch_size=16)
 
         engine.create_index(embeddings, new_metadata)
@@ -143,8 +155,17 @@ def extract_and_index_all():
         print(f"✅ Indexing complete! Created '{INDEX_FILE}' and '{META_FILE}'.")
         return True
 
-    raise RuntimeError("❌ Failed to process page images.")
+    return False
+
+
+def run_auto_sync():
+    """Wrapper function required by app.py."""
+    try:
+        return extract_and_index_all()
+    except Exception as e:
+        print(f"❌ Auto Sync Pipeline Error: {e}")
+        return False
 
 
 if __name__ == "__main__":
-    extract_and_index_all()
+    run_auto_sync()
