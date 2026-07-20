@@ -192,13 +192,13 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Helper function to render page image dynamically without needing catalog_pages folder
+# Helper function to dynamically extract and render PDF pages in real-time
 def render_match_image(meta_dict):
     raw_path = meta_dict.get("page_path", "")
     filename = os.path.basename(raw_path)
     local_img_path = os.path.join("catalog_pages", filename)
     
-    # 1. Check if image exists locally or in repository
+    # Check if pre-extracted image exists on disk
     if os.path.exists(local_img_path):
         st.image(local_img_path, use_container_width=True)
         return
@@ -206,33 +206,33 @@ def render_match_image(meta_dict):
         st.image(raw_path, use_container_width=True)
         return
 
-    # 2. Dynamic On-Demand Extraction from PDF file
+    # Dynamic rendering from local PDF file inside 'pdf_catalogs/'
     pdf_catalog = meta_dict.get("catalog", "")
     page_num = meta_dict.get("page", 1) - 1  # 0-indexed for PyMuPDF
-    pdf_local_path = os.path.join("pdf_catalogs", pdf_catalog)
+    
+    possible_pdf_paths = [
+        os.path.join("pdf_catalogs", pdf_catalog),
+        os.path.join("pdf_catalogs", pdf_catalog.replace(" ", "_")),
+        pdf_catalog
+    ]
     
     doc = None
-    if os.path.exists(pdf_local_path):
-        doc = fitz.open(pdf_local_path)
-    elif "pdf_url" in meta_dict and meta_dict["pdf_url"]:
-        try:
-            res = requests.get(meta_dict["pdf_url"], timeout=10)
-            if res.status_code == 200:
-                doc = fitz.open(stream=res.content, filetype="pdf")
-        except Exception:
-            pass
+    for pdf_p in possible_pdf_paths:
+        if os.path.exists(pdf_p):
+            doc = fitz.open(pdf_p)
+            break
 
     if doc is not None:
         try:
             page = doc[page_num]
-            pix = page.get_pixmap(dpi=130)
+            pix = page.get_pixmap(dpi=150)
             img_bytes = pix.tobytes("jpg")
             st.image(img_bytes, use_container_width=True)
             return
         except Exception as e:
-            st.caption(f"⚠️ Error rendering page {page_num + 1}: {e}")
+            st.error(f"Error rendering PDF page: {e}")
     else:
-        st.caption(f"📄 Catalog PDF `{pdf_catalog}` (Page {page_num + 1}) matched successfully.")
+        st.error(f"❌ PDF file `{pdf_catalog}` not found inside `pdf_catalogs/` folder in GitHub repository. Please commit the PDF files to `pdf_catalogs/`.")
 
 # RAM Caching for DINOv2 Vector Engine
 @st.cache_resource(show_spinner="Loading Visual Recognition Engine...")
