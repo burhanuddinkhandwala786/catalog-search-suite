@@ -234,8 +234,9 @@ def load_engine():
     return AIVectorEngine()
 
 
+# RAM Caching tied to index file modification timestamp
 @st.cache_resource(show_spinner=False)
-def load_cached_index():
+def load_cached_index(file_mtime):
     index_file = "faiss_catalog.index"
     meta_file = "catalog_meta.pkl"
     if os.path.exists(index_file) and os.path.exists(meta_file):
@@ -249,8 +250,12 @@ def load_cached_index():
     return None, []
 
 
+# Dynamically track file modified time so cache automatically updates when files change
+index_file_path = "faiss_catalog.index"
+current_mtime = os.path.getmtime(index_file_path) if os.path.exists(index_file_path) else 0
+
 engine = load_engine()
-index, metadata = load_cached_index()
+index, metadata = load_cached_index(current_mtime)
 
 if index is not None and len(metadata) > 0:
     engine.index = index
