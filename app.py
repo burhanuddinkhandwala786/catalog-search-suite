@@ -48,9 +48,9 @@ st.markdown("""
 
     .app-header {
         text-align: center;
-        padding: 10px 0 25px 0;
+        padding: 10px 0 20px 0;
         border-bottom: 1px solid #f1f5f9;
-        margin-bottom: 25px;
+        margin-bottom: 20px;
     }
     .app-header-subtitle {
         color: #b8976c;
@@ -68,36 +68,62 @@ st.markdown("""
         margin: 0;
     }
 
-    .stSelectbox div[data-baseweb="select"] {
+    /* --- DROPDOWN (SELECTBOX) STYLING --- */
+    div[data-baseweb="select"] {
         border-radius: 8px !important;
-        border: 1px solid #e2e8f0 !important;
-        background-color: #faf8f5 !important;
+        border: 1.5px solid #cbd5e1 !important;
+        background-color: #f8fafc !important;
+        transition: all 0.2s ease !important;
     }
-    .stSelectbox label, .stFileUploader label {
+    div[data-baseweb="select"]:hover {
+        border-color: #b8976c !important;
+    }
+    div[data-baseweb="select"] * {
+        color: #0f172a !important;
         font-weight: 600 !important;
-        color: #334155 !important;
-        font-size: 0.88rem !important;
-        letter-spacing: 0.01em;
     }
 
+    /* --- LABELS --- */
+    .stSelectbox label, .stFileUploader label {
+        font-weight: 700 !important;
+        color: #1e293b !important;
+        font-size: 0.88rem !important;
+        letter-spacing: 0.01em;
+        margin-bottom: 6px !important;
+    }
+
+    /* --- BUTTON STYLING --- */
     .stButton>button {
         background-color: #b8976c !important;
         color: #ffffff !important;
-        border: 1px solid #b8976c !important;
+        border: 1px solid #a38258 !important;
         border-radius: 8px !important;
-        padding: 10px 20px !important;
-        font-weight: 600 !important;
+        height: 42px !important;
+        font-weight: 700 !important;
         font-size: 0.88rem !important;
         transition: all 0.2s ease !important;
-        box-shadow: 0 2px 6px rgba(184, 151, 108, 0.2) !important;
+        box-shadow: 0 2px 5px rgba(184, 151, 108, 0.25) !important;
     }
     .stButton>button:hover {
         background-color: #a38258 !important;
-        border-color: #a38258 !important;
+        border-color: #8c6d46 !important;
+        color: #ffffff !important;
         transform: translateY(-1px) !important;
-        box-shadow: 0 4px 12px rgba(184, 151, 108, 0.3) !important;
+        box-shadow: 0 4px 10px rgba(184, 151, 108, 0.35) !important;
     }
 
+    /* --- FILE UPLOADER STYLING --- */
+    [data-testid="stFileUploader"] {
+        background-color: #f8fafc !important;
+        border: 1.5px dashed #cbd5e1 !important;
+        border-radius: 10px !important;
+        padding: 10px !important;
+    }
+    [data-testid="stFileUploader"]:hover {
+        border-color: #b8976c !important;
+    }
+
+    /* --- MATCH CARDS & TAGS --- */
     .match-container-exact {
         background: #fcfbf9;
         border: 1px solid #e2d9cd;
@@ -283,12 +309,11 @@ with tab1:
         companies = sorted(list(set(m.get("company", "General") for m in engine.metadata)))
         companies.insert(0, "All Brand Libraries")
         
-        col_filter, col_sync = st.columns([3.2, 1])
+        # Clean vertical alignment using bottom-aligned column spec
+        col_filter, col_sync = st.columns([3.5, 1], vertical_alignment="bottom")
         with col_filter:
             selected_company = st.selectbox("Select Brand Collection:", companies)
         with col_sync:
-            st.write("")
-            st.write("")
             if st.button("🔄 Sync Drive", use_container_width=True):
                 with st.spinner("Syncing Google Drive catalogs..."):
                     if run_auto_sync():
