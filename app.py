@@ -313,15 +313,35 @@ with tab1:
         col_filter, col_sync = st.columns([3.5, 1], vertical_alignment="bottom")
         with col_filter:
             selected_company = st.selectbox("Select Brand Collection:", companies)
-        with col_sync:
+with col_sync:
             if st.button("🔄 Sync Drive", use_container_width=True):
-                with st.spinner("Syncing Google Drive catalogs..."):
-                    if run_auto_sync():
-                        st.cache_resource.clear()
-                        st.success("Catalogs synchronized!")
-                        st.rerun()
-                    else:
-                        st.info("Database is up to date.")
+                gh_token = st.secrets.get("GITHUB_TOKEN")
+                repo_owner = st.secrets.get("REPO_OWNER")
+                repo_name = st.secrets.get("REPO_NAME")
+                
+                if gh_token and repo_owner and repo_name:
+                    with st.spinner("Triggering GitHub Actions cloud sync..."):
+                        url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/dispatches"
+                        headers = {
+                            "Authorization": f"Bearer {gh_token}",
+                            "Accept": "application/vnd.github.v3+json"
+                        }
+                        data = {"event_type": "drive-updated"}
+                        res = requests.post(url, json=data, headers=headers)
+                        
+                        if res.status_code == 204:
+                            st.success("Sync triggered on GitHub! New catalogs will appear in ~1–2 minutes.")
+                        else:
+                            st.error(f"Failed to trigger sync: {res.status_code}")
+                else:
+                    # Fallback to local sync if Secrets are not set
+                    with st.spinner("Syncing Google Drive catalogs..."):
+                        if run_auto_sync():
+                            st.cache_resource.clear()
+                            st.success("Catalogs synchronized!")
+                            st.rerun()
+                        else:
+                            st.info("Database is up to date.")
 
         search_file = st.file_uploader("Upload or Capture Reference Image", type=["jpg", "png", "jpeg"])
         
