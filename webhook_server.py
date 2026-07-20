@@ -24,16 +24,20 @@ def trigger_github_workflow():
     else:
         print(f"❌ Failed to trigger GitHub Action: {response.status_code} - {response.text}")
 
+# Root route so Render's health checker gets an instant 200 OK response
+@app.route("/", methods=["GET", "HEAD"])
+def health_check():
+    return "Webhook Listener Active", 200
+
 @app.route("/drive-webhook", methods=["POST"])
 def drive_webhook():
     resource_state = request.headers.get("X-Goog-Resource-State")
     
-    # Trigger sync immediately when a file is added or modified in Drive
     if resource_state in ["add", "update", "sync"]:
         trigger_github_workflow()
         
     return "OK", 200
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
+    port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
