@@ -18,22 +18,28 @@ torch.set_num_threads(4)
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
-    page_title="Visual Catalog Matcher",
-    page_icon="🔍",
+    page_title="AI Visual Catalog Engine",
+    page_icon="⚡",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
 
-# --- ELEGANT ENTERPRISE UI STYLING ---
+# --- DARK ENTERPRISE CSS STYLING ---
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@600;700&display=swap');
 
-    /* Global Typography & Reset */
+    /* Global Resets & Background Grid Overlay */
     html, body, [class*="css"], .stApp {
-        font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif !important;
-        background-color: #ffffff !important;
-        color: #1e293b !important;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif !important;
+        background-color: #07090f !important;
+        color: #f1f5f9 !important;
+        background-image: 
+            radial-gradient(circle at 10% 10%, rgba(34, 211, 238, 0.08) 0%, transparent 40%),
+            radial-gradient(circle at 90% 80%, rgba(212, 165, 116, 0.06) 0%, transparent 40%),
+            linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px) !important;
+        background-size: 100% 100%, 100% 100%, 32px 32px, 32px 32px !important;
     }
 
     /* Hide Streamlit Native Chrome */
@@ -43,156 +49,240 @@ st.markdown("""
 
     /* Container Spacing */
     .block-container { 
-        padding-top: 0.5rem !important; 
-        padding-bottom: 2rem !important; 
-        max-width: 1000px !important; 
+        padding-top: 1rem !important; 
+        padding-bottom: 2.5rem !important; 
+        max-width: 1050px !important; 
     }
 
-    /* Custom Minimal Header */
-    .app-header {
-        text-align: center;
-        padding: 10px 0 25px 0;
-        border-bottom: 1px solid #f1f5f9;
-        margin-bottom: 25px;
+    /* Glass-Morphism Command Header */
+    .command-header {
+        background: rgba(11, 15, 24, 0.75);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 16px;
+        padding: 20px 28px;
+        margin-bottom: 28px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
     }
-    .app-header-subtitle {
-        color: #b8976c;
-        font-size: 0.75rem;
-        font-weight: 700;
-        letter-spacing: 0.15em;
+    .header-eyebrow {
+        font-family: 'JetBrains Mono', monospace;
+        color: #22d3ee;
+        font-size: 0.72rem;
+        font-weight: 600;
+        letter-spacing: 0.18em;
         text-transform: uppercase;
         margin-bottom: 4px;
     }
-    .app-header-title {
-        color: #0f172a;
-        font-size: 1.5rem;
+    .header-title {
+        font-family: 'Space Grotesk', sans-serif;
+        color: #f8fafc;
+        font-size: 1.45rem;
         font-weight: 700;
         letter-spacing: -0.02em;
         margin: 0;
     }
 
-    /* Streamlit Select Box & Inputs Styling */
-    .stSelectbox div[data-baseweb="select"] {
-        border-radius: 8px !important;
-        border: 1px solid #e2e8f0 !important;
-        background-color: #faf8f5 !important;
-    }
-    .stSelectbox label, .stFileUploader label {
-        font-weight: 600 !important;
-        color: #334155 !important;
-        font-size: 0.88rem !important;
-        letter-spacing: 0.01em;
-    }
-
-    /* Primary Accent Button */
-    .stButton>button {
-        background-color: #b8976c !important;
-        color: #ffffff !important;
-        border: 1px solid #b8976c !important;
-        border-radius: 8px !important;
-        padding: 10px 20px !important;
-        font-weight: 600 !important;
-        font-size: 0.88rem !important;
-        transition: all 0.2s ease !important;
-        box-shadow: 0 2px 6px rgba(184, 151, 108, 0.2) !important;
-    }
-    .stButton>button:hover {
-        background-color: #a38258 !important;
-        border-color: #a38258 !important;
-        transform: translateY(-1px) !important;
-        box-shadow: 0 4px 12px rgba(184, 151, 108, 0.3) !important;
-    }
-
-    /* Result Cards Design */
-    .match-container-exact {
-        background: #fcfbf9;
-        border: 1px solid #e2d9cd;
-        border-radius: 12px;
-        padding: 20px;
-        margin-bottom: 20px;
-        transition: all 0.2s ease;
-    }
-    .match-container-alt {
-        background: #f8fafc;
-        border: 1px solid #e2e8f0;
-        border-radius: 12px;
-        padding: 20px;
-        margin-bottom: 20px;
-        transition: all 0.2s ease;
-    }
-    
-    .match-header-tag {
+    /* Live Status Pill */
+    .status-pill {
         display: inline-flex;
         align-items: center;
-        gap: 6px;
-        padding: 4px 12px;
-        border-radius: 20px;
-        font-size: 0.75rem;
-        font-weight: 700;
-        letter-spacing: 0.04em;
-        text-transform: uppercase;
-        margin-bottom: 12px;
+        gap: 8px;
+        background: rgba(15, 23, 42, 0.8);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        padding: 6px 14px;
+        border-radius: 30px;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.78rem;
+        font-weight: 500;
     }
-    .tag-exact {
-        background-color: #f0fdf4;
-        color: #15803d;
-        border: 1px solid #bbf7d0;
+    .status-dot-online {
+        width: 8px;
+        height: 8px;
+        background-color: #10b981;
+        border-radius: 50%;
+        box-shadow: 0 0 10px #10b981;
     }
-    .tag-alt {
-        background-color: #f0f9ff;
-        color: #0284c7;
-        border: 1px solid #bae6fd;
+    .status-dot-offline {
+        width: 8px;
+        height: 8px;
+        background-color: #ef4444;
+        border-radius: 50%;
+        box-shadow: 0 0 10px #ef4444;
     }
 
-    /* Meta Information Grid */
-    .meta-details-grid {
+    /* Inputs & Selectbox Styling */
+    .stSelectbox label, .stTextInput label, .stFileUploader label {
+        font-family: 'Inter', sans-serif !important;
+        font-weight: 600 !important;
+        color: #cbd5e1 !important;
+        font-size: 0.85rem !important;
+        letter-spacing: 0.01em;
+    }
+    .stSelectbox div[data-baseweb="select"] {
+        background-color: #0b0f18 !important;
+        border: 1px solid rgba(255, 255, 255, 0.12) !important;
+        border-radius: 10px !important;
+        color: #f8fafc !important;
+        transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+    .stSelectbox div[data-baseweb="select"]:hover, .stSelectbox div[data-baseweb="select"]:focus-within {
+        border-color: #22d3ee !important;
+        box-shadow: 0 0 0 2px rgba(34, 211, 238, 0.18) !important;
+    }
+
+    /* Dashed Upload Zone */
+    [data-testid="stFileUploader"] section {
+        background-color: #0b0f18 !important;
+        border: 1px dashed rgba(255, 255, 255, 0.15) !important;
+        border-radius: 12px !important;
+        transition: all 0.2s ease-in-out !important;
+    }
+    [data-testid="stFileUploader"] section:hover {
+        border-color: #22d3ee !important;
+        background-color: rgba(34, 211, 238, 0.02) !important;
+        box-shadow: 0 0 20px rgba(34, 211, 238, 0.1) !important;
+    }
+
+    /* Custom Pill-Style Tabs */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 8px;
+        background: #0b0f18;
+        padding: 4px;
+        border-radius: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .stTabs [data-baseweb="tab"] {
+        height: 40px;
+        border-radius: 8px;
+        color: #94a3b8;
+        font-weight: 600;
+        font-size: 0.85rem;
+        padding: 0 18px;
+        border: none !important;
+    }
+    .stTabs [aria-selected="true"] {
+        background: rgba(34, 211, 238, 0.12) !important;
+        color: #22d3ee !important;
+        border: 1px solid rgba(34, 211, 238, 0.3) !important;
+    }
+
+    /* Action Buttons Styling */
+    .stButton>button {
+        background-color: rgba(15, 23, 42, 0.8) !important;
+        color: #f8fafc !important;
+        border: 1px solid rgba(255, 255, 255, 0.15) !important;
+        border-radius: 10px !important;
+        font-weight: 600 !important;
+        font-size: 0.85rem !important;
+        transition: all 0.2s ease !important;
+    }
+    .stButton>button:hover {
+        border-color: #22d3ee !important;
+        color: #22d3ee !important;
+        box-shadow: 0 0 16px rgba(34, 211, 238, 0.2) !important;
+    }
+
+    /* Process CTA Button (Gold Accent) */
+    .cta-gold button {
+        background: linear-gradient(135deg, #d4a574 0%, #b8860b 100%) !important;
+        color: #07090f !important;
+        font-weight: 700 !important;
+        border: none !important;
+        box-shadow: 0 4px 18px rgba(212, 165, 116, 0.25) !important;
+    }
+    .cta-gold button:hover {
+        box-shadow: 0 6px 24px rgba(212, 165, 116, 0.4) !important;
+        transform: translateY(-1px) !important;
+        color: #000000 !important;
+    }
+
+    /* Result Glass Cards */
+    .card-exact {
+        background: rgba(11, 15, 24, 0.8);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-top: 3px solid #10b981;
+        border-radius: 14px;
+        padding: 22px;
+        margin-bottom: 20px;
+        backdrop-filter: blur(12px);
+        transition: transform 0.2s ease, border-color 0.2s ease;
+    }
+    .card-exact:hover {
+        transform: translateY(-2px);
+        border-color: rgba(16, 185, 129, 0.4);
+    }
+
+    .card-alt {
+        background: rgba(11, 15, 24, 0.8);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-top: 3px solid #0284c7;
+        border-radius: 14px;
+        padding: 22px;
+        margin-bottom: 20px;
+        backdrop-filter: blur(12px);
+        transition: transform 0.2s ease, border-color 0.2s ease;
+    }
+    .card-alt:hover {
+        transform: translateY(-2px);
+        border-color: rgba(2, 132, 199, 0.4);
+    }
+
+    /* Confidence Progress Bar */
+    .progress-bar-bg {
+        background: rgba(255, 255, 255, 0.06);
+        border-radius: 6px;
+        height: 6px;
+        width: 100%;
+        overflow: hidden;
+        margin-top: 6px;
+    }
+    .progress-bar-fill-exact {
+        background: linear-gradient(90deg, #059669 0%, #10b981 100%);
+        height: 100%;
+        border-radius: 6px;
+    }
+    .progress-bar-fill-alt {
+        background: linear-gradient(90deg, #0284c7 0%, #38bdf8 100%);
+        height: 100%;
+        border-radius: 6px;
+    }
+
+    /* Monospace Grid Labels */
+    .meta-grid {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
         gap: 12px;
-        margin-top: 10px;
-        margin-bottom: 15px;
+        margin-top: 14px;
     }
-    .meta-item-box {
-        background: #ffffff;
-        border: 1px solid #e2e8f0;
+    .meta-box {
+        background: rgba(255, 255, 255, 0.02);
+        border: 1px solid rgba(255, 255, 255, 0.05);
         border-radius: 8px;
         padding: 10px 14px;
-        font-size: 0.85rem;
-        color: #475569;
     }
-    .meta-item-box strong {
-        color: #0f172a;
-    }
-
-    /* Tab Custom Styling */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 12px;
-        border-bottom: 1px solid #e2e8f0;
-    }
-    .stTabs [data-baseweb="tab"] {
-        height: 44px;
-        border-radius: 6px 6px 0 0;
-        color: #64748b;
+    .meta-label {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.68rem;
         font-weight: 600;
+        color: #64748b;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        margin-bottom: 4px;
+    }
+    .meta-value {
         font-size: 0.88rem;
-    }
-    .stTabs [aria-selected="true"] {
-        color: #b8976c !important;
-        border-bottom-color: #b8976c !important;
-    }
-
-    /* Image Display Wrapper */
-    .result-image-frame {
-        border-radius: 8px;
-        overflow: hidden;
-        border: 1px solid #e2e8f0;
-        margin-top: 10px;
+        color: #f1f5f9;
+        font-weight: 500;
     }
 </style>
 """, unsafe_allow_html=True)
 
 # RAM Caching for DINOv2 Vector Engine
-@st.cache_resource(show_spinner="Loading Visual Recognition Engine...")
+@st.cache_resource(show_spinner="Loading Neural Vector Core...")
 def load_engine():
     return AIVectorEngine()
 
@@ -225,15 +315,34 @@ PAGE_DIR = "catalog_pages"
 INDEX_FILE = "faiss_catalog.index"
 META_FILE = "catalog_meta.pkl"
 
-# --- ELEGANT MINIMAL HEADER ---
-st.markdown("""
-<div class="app-header">
-    <div class="app-header-subtitle">INSTANT PATTERN RECOGNITION</div>
-    <div class="app-header-title">AI Catalog Search Engine</div>
+# --- GLASS COMMAND HEADER ---
+total_pages = len(engine.metadata) if st.session_state.get("catalog_indexed", False) else 0
+
+status_html = f"""
+<div class="status-pill">
+    <div class="status-dot-online"></div>
+    <span style="color: #f8fafc;">Index Online</span>
+    <span style="color: #64748b;">·</span>
+    <span style="color: #22d3ee;">{total_pages} pages</span>
+</div>
+""" if st.session_state.get("catalog_indexed", False) else """
+<div class="status-pill">
+    <div class="status-dot-offline"></div>
+    <span style="color: #ef4444;">Index Offline</span>
+</div>
+"""
+
+st.markdown(f"""
+<div class="command-header">
+    <div>
+        <div class="header-eyebrow">Enterprise Intelligence Suite</div>
+        <div class="header-title">AI Catalog Visual Matcher</div>
+    </div>
+    {status_html}
 </div>
 """, unsafe_allow_html=True)
 
-tab1, tab2 = st.tabs(["🔍 Visual Pattern Search", "⚙️ Index Management"])
+tab1, tab2 = st.tabs(["🔍 Visual Pattern Matcher", "⚡ Instant Indexer"])
 
 # TAB 1: PRODUCTION SEARCH
 with tab1:
@@ -261,15 +370,15 @@ with tab1:
         if search_file:
             raw_pil_img = Image.open(io.BytesIO(search_file.getvalue())).convert("RGB")
             
-            st.markdown("<p style='font-weight:600; color:#334155; font-size:0.88rem; margin-top:16px;'>Crop Target Texture or Pattern Area:</p>", unsafe_allow_html=True)
+            st.markdown("<p style='font-family:\"JetBrains Mono\", monospace; font-size:0.75rem; color:#22d3ee; letter-spacing:0.08em; text-transform:uppercase; margin-top:16px;'>Crop Target Texture Area:</p>", unsafe_allow_html=True)
             cropped_img = st_cropper(
                 raw_pil_img, 
                 realtime_update=True, 
-                box_color='#b8976c', 
+                box_color='#22d3ee', 
                 aspect_ratio=None
             )
             
-            with st.spinner("Searching neural index for visual matches..."):
+            with st.spinner("Executing neural vector search..."):
                 q_emb = engine.get_single_embedding(cropped_img)
                 raw_matches = engine.search(q_emb, top_k=15, min_confidence=0.50)
                 
@@ -284,18 +393,31 @@ with tab1:
             st.markdown("<br>", unsafe_allow_html=True)
             
             if exact_matches:
-                st.markdown("<h4 style='color:#0f172a; font-weight:700; font-size:1.1rem;'>🎯 Exact Match Results</h4>", unsafe_allow_html=True)
+                st.markdown("<p style='font-family:\"Space Grotesk\", sans-serif; font-size:1.1rem; color:#f8fafc; font-weight:700;'>🎯 Direct Matches</p>", unsafe_allow_html=True)
                 for i, res in enumerate(exact_matches[:3]):
                     score_pct = res["score"] * 100
                     st.markdown(f"""
-                    <div class="match-container-exact">
-                        <div class="match-header-tag tag-exact">
-                            <span>Direct Match #{i+1}</span> • <span>{score_pct:.1f}% Confidence</span>
+                    <div class="card-exact">
+                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                            <span style="font-family:'JetBrains Mono', monospace; font-size:0.75rem; color:#10b981; font-weight:600; letter-spacing:0.05em; text-transform:uppercase;">EXACT MATCH #{i+1}</span>
+                            <span style="font-family:'JetBrains Mono', monospace; font-size:0.85rem; color:#f8fafc; font-weight:600;">{score_pct:.1f}%</span>
                         </div>
-                        <div class="meta-details-grid">
-                            <div class="meta-item-box">🏢 <strong>Brand:</strong> {res['meta'].get('company', 'General')}</div>
-                            <div class="meta-item-box">📖 <strong>Catalog:</strong> {res['meta']['catalog']}</div>
-                            <div class="meta-item-box">📄 <strong>Location:</strong> Page {res['meta']['page']}</div>
+                        <div class="progress-bar-bg">
+                            <div class="progress-bar-fill-exact" style="width: {score_pct}%;"></div>
+                        </div>
+                        <div class="meta-grid">
+                            <div class="meta-box">
+                                <div class="meta-label">BRAND</div>
+                                <div class="meta-value">{res['meta'].get('company', 'General')}</div>
+                            </div>
+                            <div class="meta-box">
+                                <div class="meta-label">CATALOG</div>
+                                <div class="meta-value">{res['meta']['catalog']}</div>
+                            </div>
+                            <div class="meta-box">
+                                <div class="meta-label">LOCATION</div>
+                                <div class="meta-value">Page {res['meta']['page']}</div>
+                            </div>
                         </div>
                     </div>
                     """, unsafe_allow_html=True)
@@ -304,19 +426,32 @@ with tab1:
                     st.divider()
                     
             elif alternative_matches:
-                st.info("💡 **No exact product match found. Displaying closest matching alternatives:**")
-                st.markdown("<h4 style='color:#0f172a; font-weight:700; font-size:1.1rem;'>🎨 Recommended Alternatives</h4>", unsafe_allow_html=True)
+                st.info("💡 **Exact match not found. Displaying closest matching alternatives:**")
+                st.markdown("<p style='font-family:\"Space Grotesk\", sans-serif; font-size:1.1rem; color:#f8fafc; font-weight:700;'>🎨 Recommended Alternatives</p>", unsafe_allow_html=True)
                 for i, res in enumerate(alternative_matches[:3]):
                     score_pct = res["score"] * 100
                     st.markdown(f"""
-                    <div class="match-container-alt">
-                        <div class="match-header-tag tag-alt">
-                            <span>Alternative #{i+1}</span> • <span>{score_pct:.1f}% Visual Similarity</span>
+                    <div class="card-alt">
+                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                            <span style="font-family:'JetBrains Mono', monospace; font-size:0.75rem; color:#38bdf8; font-weight:600; letter-spacing:0.05em; text-transform:uppercase;">ALTERNATIVE #{i+1}</span>
+                            <span style="font-family:'JetBrains Mono', monospace; font-size:0.85rem; color:#f8fafc; font-weight:600;">{score_pct:.1f}%</span>
                         </div>
-                        <div class="meta-details-grid">
-                            <div class="meta-item-box">🏢 <strong>Brand:</strong> {res['meta'].get('company', 'General')}</div>
-                            <div class="meta-item-box">📖 <strong>Catalog:</strong> {res['meta']['catalog']}</div>
-                            <div class="meta-item-box">📄 <strong>Location:</strong> Page {res['meta']['page']}</div>
+                        <div class="progress-bar-bg">
+                            <div class="progress-bar-fill-alt" style="width: {score_pct}%;"></div>
+                        </div>
+                        <div class="meta-grid">
+                            <div class="meta-box">
+                                <div class="meta-label">BRAND</div>
+                                <div class="meta-value">{res['meta'].get('company', 'General')}</div>
+                            </div>
+                            <div class="meta-box">
+                                <div class="meta-label">CATALOG</div>
+                                <div class="meta-value">{res['meta']['catalog']}</div>
+                            </div>
+                            <div class="meta-box">
+                                <div class="meta-label">LOCATION</div>
+                                <div class="meta-value">Page {res['meta']['page']}</div>
+                            </div>
                         </div>
                     </div>
                     """, unsafe_allow_html=True)
@@ -330,11 +465,12 @@ with tab1:
 
 # TAB 2: STANDALONE UPLOADER
 with tab2:
-    st.markdown("<h4 style='color:#0f172a; font-weight:700; font-size:1.05rem; margin-top:10px;'>⚡ Manual PDF Indexer</h4>", unsafe_allow_html=True)
-    company_name = st.text_input("Brand / Manufacturer Name Tag:", value="General")
-    uploaded_pdfs = st.file_uploader("Upload PDF Catalogs to Generate Embeddings", type=["pdf"], accept_multiple_files=True)
+    st.markdown("<p style='font-family:\"Space Grotesk\", sans-serif; font-size:1.05rem; color:#f8fafc; font-weight:700; margin-top:10px;'>⚡ Direct PDF Catalog Indexer</p>", unsafe_allow_html=True)
+    company_name = st.text_input("Brand / Manufacturer Tag:", value="General")
+    uploaded_pdfs = st.file_uploader("Upload PDF Catalogs to Vectorize", type=["pdf"], accept_multiple_files=True)
     
-    if uploaded_pdfs and st.button("Process & Update Vector Database", type="primary"):
+    st.markdown('<div class="cta-gold">', unsafe_allow_html=True)
+    if uploaded_pdfs and st.button("Process & Update Database", type="primary", use_container_width=True):
         with st.spinner("Extracting catalog pages & generating visual embeddings..."):
             os.makedirs(PAGE_DIR, exist_ok=True)
             pages_to_embed = []
@@ -382,3 +518,4 @@ with tab2:
                 st.session_state["catalog_indexed"] = True
                 st.success(f"Indexed {len(pages_to_embed)} catalog pages successfully!")
                 st.rerun()
+    st.markdown('</div>', unsafe_allow_html=True)
