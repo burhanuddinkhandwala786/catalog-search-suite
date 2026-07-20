@@ -10,7 +10,7 @@ import torch
 import warnings
 import requests
 from core_engine import AIVectorEngine
-from sync_drive import run_auto_sync
+from sync_drive import run_auto_sync, fetch_pdf_bytes_from_drive
 
 warnings.filterwarnings("ignore")
 
@@ -30,26 +30,22 @@ st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap');
 
-    /* Global Typography & Reset */
     html, body, [class*="css"], .stApp {
         font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif !important;
         background-color: #ffffff !important;
         color: #1e293b !important;
     }
 
-    /* Hide Streamlit Native Chrome */
     [data-testid="stSidebar"], #MainMenu, footer, header, .stDeployButton { 
         display: none !important; 
     }
 
-    /* Container Spacing */
     .block-container { 
         padding-top: 0.5rem !important; 
         padding-bottom: 2rem !important; 
         max-width: 1000px !important; 
     }
 
-    /* Custom Minimal Header */
     .app-header {
         text-align: center;
         padding: 10px 0 25px 0;
@@ -72,7 +68,6 @@ st.markdown("""
         margin: 0;
     }
 
-    /* Streamlit Select Box & Inputs Styling */
     .stSelectbox div[data-baseweb="select"] {
         border-radius: 8px !important;
         border: 1px solid #e2e8f0 !important;
@@ -85,7 +80,6 @@ st.markdown("""
         letter-spacing: 0.01em;
     }
 
-    /* Primary Accent Button */
     .stButton>button {
         background-color: #b8976c !important;
         color: #ffffff !important;
@@ -104,14 +98,12 @@ st.markdown("""
         box-shadow: 0 4px 12px rgba(184, 151, 108, 0.3) !important;
     }
 
-    /* Result Cards Design */
     .match-container-exact {
         background: #fcfbf9;
         border: 1px solid #e2d9cd;
         border-radius: 12px;
         padding: 20px;
         margin-bottom: 20px;
-        transition: all 0.2s ease;
     }
     .match-container-alt {
         background: #f8fafc;
@@ -119,7 +111,6 @@ st.markdown("""
         border-radius: 12px;
         padding: 20px;
         margin-bottom: 20px;
-        transition: all 0.2s ease;
     }
     
     .match-header-tag {
@@ -145,7 +136,6 @@ st.markdown("""
         border: 1px solid #bae6fd;
     }
 
-    /* Meta Information Grid */
     .meta-details-grid {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -165,7 +155,6 @@ st.markdown("""
         color: #0f172a;
     }
 
-    /* Tab Custom Styling */
     .stTabs [data-baseweb="tab-list"] {
         gap: 12px;
         border-bottom: 1px solid #e2e8f0;
@@ -181,36 +170,17 @@ st.markdown("""
         color: #b8976c !important;
         border-bottom-color: #b8976c !important;
     }
-
-    /* Image Display Wrapper */
-    .result-image-frame {
-        border-radius: 8px;
-        overflow: hidden;
-        border: 1px solid #e2e8f0;
-        margin-top: 10px;
-    }
 </style>
 """, unsafe_allow_html=True)
 
-# RAM Cache for downloaded PDF documents to avoid downloading twice
-@st.cache_data(show_spinner=False)
-def fetch_pdf_bytes_from_drive(file_id):
-    url = f"https://drive.google.com/uc?export=download&id={file_id}"
-    try:
-        res = requests.get(url, timeout=15)
-        if res.status_code == 200:
-            return res.content
-    except Exception:
-        pass
-    return None
 
-# Robust image loader
+# Dynamic Cloud Image Renderer
 def render_match_image(meta_dict):
     raw_path = meta_dict.get("page_path", "")
     filename = os.path.basename(raw_path) if raw_path else ""
     local_img_path = os.path.join("catalog_pages", filename) if filename else ""
     
-    # Strategy 1: Check repo disk for rendered image
+    # Check if pre-extracted image exists on cloud disk
     if local_img_path and os.path.exists(local_img_path):
         st.image(local_img_path, use_container_width=True)
         return
@@ -218,9 +188,9 @@ def render_match_image(meta_dict):
         st.image(raw_path, use_container_width=True)
         return
 
-    # Strategy 2: Check local pdf_catalogs/ folder
+    # Dynamic extraction from PDF
     pdf_catalog = meta_dict.get("catalog", "")
-    page_num = meta_dict.get("page", 1) - 1  # 0-indexed for PyMuPDF
+    page_num = meta_dict.get("page", 1) - 1
     
     possible_pdf_paths = [
         os.path.join("pdf_catalogs", pdf_catalog),
@@ -231,19 +201,21 @@ def render_match_image(meta_dict):
     doc = None
     for pdf_p in possible_pdf_paths:
         if pdf_p and os.path.exists(pdf_p):
-            doc = fitz.open(pdf_p)
-            break
+            try:
+                doc = fitz.open(pdf_p)
+                break
+            except Exception:
+                pass
 
-    # Strategy 3: Download PDF dynamically from Google Drive via file_id
+    # Fetch PDF from Drive if file_id is present
     if doc is None and "file_id" in meta_dict and meta_dict["file_id"]:
         pdf_bytes = fetch_pdf_bytes_from_drive(meta_dict["file_id"])
         if pdf_bytes:
             try:
                 doc = fitz.open(stream=pdf_bytes, filetype="pdf")
             except Exception:
-                doc = None
+                pass
 
-    # Strategy 4: Render page from PyMuPDF
     if doc is not None:
         try:
             page = doc[page_num]
@@ -253,15 +225,15 @@ def render_match_image(meta_dict):
         except Exception as e:
             st.warning(f"Error rendering page {page_num + 1}: {e}")
 
-    # Fallback status box if image and PDF are both missing
-    st.info(f"📌 **Match Reference:** {pdf_catalog} — **Page {page_num + 1}**")
+    st.info(f"📍 **Match Reference:** {pdf_catalog} — **Page {page_num + 1}**")
 
-# RAM Caching for DINOv2 Vector Engine
+
+# Engine Initialization
 @st.cache_resource(show_spinner="Loading Visual Recognition Engine...")
 def load_engine():
     return AIVectorEngine()
 
-# RAM Caching for Vector Index
+
 @st.cache_resource(show_spinner=False)
 def load_cached_index():
     index_file = "faiss_catalog.index"
@@ -275,6 +247,7 @@ def load_cached_index():
         except Exception:
             return None, []
     return None, []
+
 
 engine = load_engine()
 index, metadata = load_cached_index()
@@ -290,7 +263,6 @@ PAGE_DIR = "catalog_pages"
 INDEX_FILE = "faiss_catalog.index"
 META_FILE = "catalog_meta.pkl"
 
-# --- ELEGANT MINIMAL HEADER ---
 st.markdown("""
 <div class="app-header">
     <div class="app-header-subtitle">INSTANT PATTERN RECOGNITION</div>
@@ -300,7 +272,7 @@ st.markdown("""
 
 tab1, tab2 = st.tabs(["🔍 Visual Pattern Search", "⚙️ Index Management"])
 
-# TAB 1: PRODUCTION SEARCH
+# TAB 1: VISUAL SEARCH
 with tab1:
     if st.session_state.get("catalog_indexed", False):
         companies = sorted(list(set(m.get("company", "General") for m in engine.metadata)))
@@ -313,7 +285,7 @@ with tab1:
             st.write("")
             st.write("")
             if st.button("🔄 Sync Drive", use_container_width=True):
-                with st.spinner("Checking Google Drive..."):
+                with st.spinner("Syncing Google Drive catalogs..."):
                     if run_auto_sync():
                         st.cache_resource.clear()
                         st.success("Catalogs synchronized!")
@@ -387,18 +359,24 @@ with tab1:
                     render_match_image(res["meta"])
                     st.divider()
             else:
-                st.warning(f"❌ No matching pattern found under '{selected_company}'. Try adjusting the crop area or selecting 'All Brand Libraries'.")
+                st.warning(f"❌ No matching pattern found under '{selected_company}'. Try adjusting crop or selecting 'All Brand Libraries'.")
     else:
-        st.info("No catalog index loaded. Use 'Sync Drive' or Tab 2 to index catalog files.")
+        st.info("No catalog index loaded. Click 'Sync Drive' above or use Tab 2 to process PDFs dynamically.")
+        if st.button("🚀 Initial Cloud Sync", type="primary"):
+            with st.spinner("Processing PDF catalogs directly in web app..."):
+                if run_auto_sync():
+                    st.cache_resource.clear()
+                    st.success("Indexing complete!")
+                    st.rerun()
 
-# TAB 2: STANDALONE UPLOADER
+# TAB 2: MANUAL WEB UPLOADER
 with tab2:
-    st.markdown("<h4 style='color:#0f172a; font-weight:700; font-size:1.05rem; margin-top:10px;'>⚡ Manual PDF Indexer</h4>", unsafe_allow_html=True)
+    st.markdown("<h4 style='color:#0f172a; font-weight:700; font-size:1.05rem; margin-top:10px;'>⚡ Cloud PDF Indexer</h4>", unsafe_allow_html=True)
     company_name = st.text_input("Brand / Manufacturer Name Tag:", value="General")
     uploaded_pdfs = st.file_uploader("Upload PDF Catalogs to Generate Embeddings", type=["pdf"], accept_multiple_files=True)
     
     if uploaded_pdfs and st.button("Process & Update Vector Database", type="primary"):
-        with st.spinner("Extracting catalog pages & generating visual embeddings..."):
+        with st.spinner("Extracting catalog pages & generating visual embeddings in web app memory..."):
             os.makedirs(PAGE_DIR, exist_ok=True)
             pages_to_embed = []
             new_metadata = []
