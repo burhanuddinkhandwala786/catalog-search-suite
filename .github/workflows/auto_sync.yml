@@ -27,7 +27,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Pull latest repository changes
+      - name: Pull latest repository state
         run: |
           git config --global user.name 'Catalog-Sync-Bot'
           git config --global user.email 'bot@github.com'
@@ -45,11 +45,14 @@ jobs:
 
       - name: Commit and push updated index and images
         run: |
-          # Force add index, metadata, and extracted page images
+          # Stage generated index, metadata, and extracted page images
           git add -f faiss_catalog.index catalog_meta.pkl catalog_pages/
           
           if git status --porcelain | grep -E 'faiss_catalog|catalog_meta|catalog_pages'; then
             git commit -m "Auto-updated catalog index and page images"
+            
+            # Rebase again right before push to catch any commits made during the 6-min runtime
+            git pull origin main --rebase
             git push origin main
           else
             echo "No changes detected to commit."
