@@ -313,7 +313,7 @@ with tab1:
         col_filter, col_sync = st.columns([3.5, 1], vertical_alignment="bottom")
         with col_filter:
             selected_company = st.selectbox("Select Brand Collection:", companies)
-with col_sync:
+        with col_sync:
             if st.button("🔄 Sync Drive", use_container_width=True):
                 gh_token = st.secrets.get("GITHUB_TOKEN")
                 repo_owner = st.secrets.get("REPO_OWNER")
