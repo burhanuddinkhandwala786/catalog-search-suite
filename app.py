@@ -343,7 +343,7 @@ with col_sync:
                         else:
                             st.info("Database is up to date.")
 
-         search_file = st.file_uploader("Upload or Capture Reference Image", type=["jpg", "png", "jpeg"])
+    search_file = st.file_uploader("Upload or Capture Reference Image", type=["jpg", "png", "jpeg"])
         
         if search_file:
             raw_pil_img = Image.open(io.BytesIO(search_file.getvalue())).convert("RGB")
