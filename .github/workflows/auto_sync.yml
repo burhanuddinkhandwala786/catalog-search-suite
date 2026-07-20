@@ -22,6 +22,18 @@ jobs:
         with:
           python-version: '3.10'
 
+      - name: Cache PyTorch & DINOv2 Weights
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/torch
+          key: torch-dinov2-v1
+
+      - name: Cache Pip Dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
@@ -33,7 +45,7 @@ jobs:
           git config --global user.email 'bot@github.com'
           git pull origin main --rebase
 
-      - name: Run Drive Sync Engine
+      - name: Run Drive Sync Engine (Incremental)
         env:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
         run: |
@@ -45,15 +57,12 @@ jobs:
 
       - name: Commit and push updated index and images
         run: |
-          # Stage generated index, metadata, and extracted page images
           git add -f faiss_catalog.index catalog_meta.pkl catalog_pages/
           
           if git status --porcelain | grep -E 'faiss_catalog|catalog_meta|catalog_pages'; then
             git commit -m "Auto-updated catalog index and page images"
-            
-            # Rebase again right before push to catch any commits made during the 6-min runtime
             git pull origin main --rebase
             git push origin main
           else
-            echo "No changes detected to commit."
+            echo "No new catalog changes detected to commit."
           fi
