@@ -192,13 +192,25 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Smart multi-stage image retriever
+# RAM Cache for downloaded PDF documents to avoid downloading twice
+@st.cache_data(show_spinner=False)
+def fetch_pdf_bytes_from_drive(file_id):
+    url = f"https://drive.google.com/uc?export=download&id={file_id}"
+    try:
+        res = requests.get(url, timeout=15)
+        if res.status_code == 200:
+            return res.content
+    except Exception:
+        pass
+    return None
+
+# Robust image loader
 def render_match_image(meta_dict):
     raw_path = meta_dict.get("page_path", "")
     filename = os.path.basename(raw_path) if raw_path else ""
     local_img_path = os.path.join("catalog_pages", filename) if filename else ""
     
-    # Stage 1: Check if rendered image exists on disk
+    # Strategy 1: Check repo disk for rendered image
     if local_img_path and os.path.exists(local_img_path):
         st.image(local_img_path, use_container_width=True)
         return
@@ -206,9 +218,9 @@ def render_match_image(meta_dict):
         st.image(raw_path, use_container_width=True)
         return
 
-    # Stage 2: Check local PDF file inside pdf_catalogs/
+    # Strategy 2: Check local pdf_catalogs/ folder
     pdf_catalog = meta_dict.get("catalog", "")
-    page_num = meta_dict.get("page", 1) - 1
+    page_num = meta_dict.get("page", 1) - 1  # 0-indexed for PyMuPDF
     
     possible_pdf_paths = [
         os.path.join("pdf_catalogs", pdf_catalog),
@@ -222,18 +234,16 @@ def render_match_image(meta_dict):
             doc = fitz.open(pdf_p)
             break
 
-    # Stage 3: Fetch PDF via Drive Link/ID if stored in metadata
-    if doc is None and "file_id" in meta_dict:
-        file_id = meta_dict["file_id"]
-        drive_url = f"https://drive.google.com/uc?export=download&id={file_id}"
-        try:
-            res = requests.get(drive_url, timeout=12)
-            if res.status_code == 200:
-                doc = fitz.open(stream=res.content, filetype="pdf")
-        except Exception:
-            pass
+    # Strategy 3: Download PDF dynamically from Google Drive via file_id
+    if doc is None and "file_id" in meta_dict and meta_dict["file_id"]:
+        pdf_bytes = fetch_pdf_bytes_from_drive(meta_dict["file_id"])
+        if pdf_bytes:
+            try:
+                doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+            except Exception:
+                doc = None
 
-    # Render page from PyMuPDF document if loaded
+    # Strategy 4: Render page from PyMuPDF
     if doc is not None:
         try:
             page = doc[page_num]
@@ -242,9 +252,9 @@ def render_match_image(meta_dict):
             return
         except Exception as e:
             st.warning(f"Error rendering page {page_num + 1}: {e}")
-    
-    # Graceful fallback indicator if PDF file is completely unreachable
-    st.info(f"📍 **Match Reference:** {pdf_catalog} — **Page {page_num + 1}**")
+
+    # Fallback status box if image and PDF are both missing
+    st.info(f"📌 **Match Reference:** {pdf_catalog} — **Page {page_num + 1}**")
 
 # RAM Caching for DINOv2 Vector Engine
 @st.cache_resource(show_spinner="Loading Visual Recognition Engine...")
