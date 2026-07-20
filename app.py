@@ -191,6 +191,19 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# Helper function to dynamically locate image files across local and cloud environments
+def render_match_image(meta_dict):
+    raw_path = meta_dict.get("page_path", "")
+    filename = os.path.basename(raw_path)
+    target_path = os.path.join("catalog_pages", filename)
+    
+    if os.path.exists(target_path):
+        st.image(target_path, use_container_width=True)
+    elif os.path.exists(raw_path):
+        st.image(raw_path, use_container_width=True)
+    else:
+        st.caption(f"⚠️ Page image `{filename}` not found in `catalog_pages/` repository folder.")
+
 # RAM Caching for DINOv2 Vector Engine
 @st.cache_resource(show_spinner="Loading Visual Recognition Engine...")
 def load_engine():
@@ -299,8 +312,7 @@ with tab1:
                         </div>
                     </div>
                     """, unsafe_allow_html=True)
-                    if os.path.exists(res["meta"]["page_path"]):
-                        st.image(res["meta"]["page_path"], use_container_width=True)
+                    render_match_image(res["meta"])
                     st.divider()
                     
             elif alternative_matches:
@@ -320,8 +332,7 @@ with tab1:
                         </div>
                     </div>
                     """, unsafe_allow_html=True)
-                    if os.path.exists(res["meta"]["page_path"]):
-                        st.image(res["meta"]["page_path"], use_container_width=True)
+                    render_match_image(res["meta"])
                     st.divider()
             else:
                 st.warning(f"❌ No matching pattern found under '{selected_company}'. Try adjusting the crop area or selecting 'All Brand Libraries'.")
