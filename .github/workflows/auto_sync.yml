@@ -49,7 +49,7 @@ jobs:
           git add -f faiss_catalog.index catalog_meta.pkl catalog_pages/
           
           if git status --porcelain | grep -E 'faiss_catalog|catalog_meta|catalog_pages'; then
-            git commit -m "Auto-updated catalog index from Google Drive [skip ci]"
+            git commit -m "Auto-updated catalog index from Google Drive"
             git push origin main
           else
             echo "No changes detected to commit."
