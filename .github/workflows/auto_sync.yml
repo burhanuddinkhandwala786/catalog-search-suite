@@ -33,17 +33,19 @@ jobs:
         run: |
           python sync_drive.py
 
-      - name: Commit and push updated vector database & images
+      - name: Commit and push updated vector database & page images
         run: |
           git config --global user.name 'Catalog-Sync-Bot'
           git config --global user.email 'bot@github.com'
-          git add faiss_catalog.index catalog_meta.pkl catalog_pages/ pdf_catalogs/ || true
           
-          # Pull latest changes to prevent push rejection
+          # Force add generated images and index files
+          git add -f catalog_pages/ pdf_catalogs/ faiss_catalog.index catalog_meta.pkl
+          
+          # Rebase to handle any remote changes
           git pull origin main --rebase
           
           if git status --porcelain | grep -E 'faiss_catalog|catalog_meta|catalog_pages|pdf_catalogs'; then
-            git commit -m "Auto-updated catalog index from Google Drive [skip ci]"
+            git commit -m "Auto-updated catalog index and page images [skip ci]"
             git push origin main
           else
             echo "No changes detected to commit."
