@@ -4,6 +4,7 @@ import pickle
 import faiss
 import fitz  # PyMuPDF
 from PIL import Image
+import requests
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
@@ -18,9 +19,20 @@ SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 
 
 def ensure_directories():
-    """Ensure local storage folders exist."""
     os.makedirs(PAGE_DIR, exist_ok=True)
     os.makedirs(PDF_DIR, exist_ok=True)
+
+
+def fetch_pdf_bytes_from_drive(file_id):
+    """Downloads raw PDF bytes from public export or Drive link."""
+    url = f"https://drive.google.com/uc?export=download&id={file_id}"
+    try:
+        res = requests.get(url, timeout=15)
+        if res.status_code == 200:
+            return res.content
+    except Exception:
+        pass
+    return None
 
 
 def get_drive_service():
@@ -49,11 +61,11 @@ def get_drive_service():
 
 
 def download_pdfs_from_drive():
-    """Syncs PDF files from Google Drive if service is available."""
+    """Syncs PDF files from Google Drive."""
     ensure_directories()
     service = get_drive_service()
     if not service:
-        print("⚠️ Skipping Drive download step. Using local files in 'pdf_catalogs/'.")
+        print("⚠️ Skipping Drive API download. Scanning local 'pdf_catalogs/' directory.")
         return
 
     print("☁️ Querying Google Drive for catalog PDFs...")
@@ -93,10 +105,8 @@ def download_pdfs_from_drive():
 
 
 def extract_and_index_all():
-    """Processes all local PDFs in pdf_catalogs/, extracts pages, and creates the index."""
+    """Extracts all local PDFs in pdf_catalogs/, generates page images, and creates index."""
     ensure_directories()
-    
-    # Try downloading from Drive first
     download_pdfs_from_drive()
 
     engine = AIVectorEngine()
@@ -106,10 +116,10 @@ def extract_and_index_all():
     pdf_files = [f for f in os.listdir(PDF_DIR) if f.lower().endswith(".pdf")]
 
     if not pdf_files:
-        print(f"⚠️ No PDFs found in '{PDF_DIR}/'. Place PDF files in '{PDF_DIR}/' or connect Drive.")
+        print(f"⚠️ No PDFs found in '{PDF_DIR}/'. Place PDFs in folder or connect Drive.")
         return False
 
-    print(f"🔄 Processing {len(pdf_files)} PDF catalog(s)...")
+    print(f"🔄 Processing {len(pdf_files)} PDF catalog file(s)...")
 
     for pdf_filename in sorted(pdf_files):
         pdf_path = os.path.join(PDF_DIR, pdf_filename)
@@ -159,7 +169,7 @@ def extract_and_index_all():
 
 
 def run_auto_sync():
-    """Wrapper function required by app.py."""
+    """Wrapper function imported by app.py."""
     try:
         return extract_and_index_all()
     except Exception as e:
