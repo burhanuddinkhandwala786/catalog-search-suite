@@ -4,6 +4,7 @@ import pickle
 import faiss
 import fitz  # PyMuPDF
 from PIL import Image
+import requests
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
@@ -20,6 +21,18 @@ SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 def ensure_directories():
     os.makedirs(PAGE_DIR, exist_ok=True)
     os.makedirs(PDF_DIR, exist_ok=True)
+
+
+def fetch_pdf_bytes_from_drive(file_id):
+    """Downloads raw PDF bytes from public export or Drive link."""
+    url = f"https://drive.google.com/uc?export=download&id={file_id}"
+    try:
+        res = requests.get(url, timeout=15)
+        if res.status_code == 200:
+            return res.content
+    except Exception:
+        pass
+    return None
 
 
 def get_drive_service():
