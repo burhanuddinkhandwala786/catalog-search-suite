@@ -296,12 +296,6 @@ engine = load_engine()
 latest_sha = get_latest_github_commit()
 index, metadata = load_remote_index_via_api(latest_sha)
 
-# --- TEMPORARY DEBUG CHECK ---
-st.write(f"🔍 **Debug Info:** Active SHA: `{latest_sha[:7]}` | Total Pages Loaded: `{len(metadata)}`")
-if metadata:
-    loaded_catalogs = set(m.get("catalog", "") for m in metadata)
-    st.write(f"📖 **Loaded Catalogs in Memory:** {list(loaded_catalogs)}")
-
 if index is not None and len(metadata) > 0:
     engine.index = index
     engine.metadata = metadata
@@ -375,15 +369,15 @@ with tab1:
             
             with st.spinner("Searching neural index for visual matches..."):
                 q_emb = engine.get_single_embedding(cropped_img)
-                raw_matches = engine.search(q_emb, top_k=15, min_confidence=0.50)
+                raw_matches = engine.search(q_emb, top_k=15, min_confidence=0.10)
                 
                 filtered_matches = [
                     m for m in raw_matches 
                     if selected_company == "All Brand Libraries" or m["meta"].get("company", "General") == selected_company
                 ]
                 
-                exact_matches = [m for m in filtered_matches if m["score"] >= 0.75]
-                alternative_matches = [m for m in filtered_matches if 0.50 <= m["score"] < 0.75]
+                exact_matches = [m for m in filtered_matches if m["score"] >= 0.40]
+                alternative_matches = [m for m in filtered_matches if 0.10 <= m["score"] < 0.40]
             
             st.markdown("<br>", unsafe_allow_html=True)
             
