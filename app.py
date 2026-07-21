@@ -335,16 +335,38 @@ with tab2:
         try:
             col_info = engine.client.get_collection(COLLECTION_NAME)
             total_vectors = col_info.points_count
-            brands_list = engine.get_all_brands()
-            total_brands = len(brands_list)
+            
+            # Fetch all payload points to count unique brands AND unique catalogs
+            scroll_res, _ = engine.client.scroll(
+                collection_name=COLLECTION_NAME,
+                limit=10000,
+                with_payload=["company", "catalog"],
+                with_vectors=False
+            )
+            
+            all_brands = set()
+            all_catalogs = set()
+            for point in scroll_res:
+                if point.payload:
+                    if "company" in point.payload:
+                        all_brands.add(point.payload["company"])
+                    if "catalog" in point.payload:
+                        all_catalogs.add(point.payload["catalog"])
+
+            total_brands = len(all_brands)
+            total_catalogs = len(all_catalogs)
+
         except Exception:
             total_vectors = 0
             total_brands = 0
+            total_catalogs = 0
 
-        m_col1, m_col2 = st.columns(2)
+        m_col1, m_col2, m_col3 = st.columns(3)
         with m_col1:
-            st.metric(label="Total Indexed Brands", value=total_brands)
+            st.metric(label="PDF Catalogs Indexed", value=total_catalogs)
         with m_col2:
+            st.metric(label="Unique Brands", value=total_brands)
+        with m_col3:
             st.metric(label="Searchable Vector Patches", value=f"{total_vectors:,}")
             
     st.divider()
