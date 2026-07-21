@@ -328,10 +328,66 @@ with tab1:
                     st.info(f"ℹ️ **No matching product found in current catalogs above {min_confidence_slider}% confidence.**\n\nIf this is a new product, please ensure its PDF catalog is uploaded to Google Drive and synced.")
 
 with tab2:
-    st.markdown("<h4 style='color:#0f172a; font-weight:700; font-size:1.05rem; margin-top:10px;'>⚡ Cloud PDF Indexer</h4>", unsafe_allow_html=True)
-    if st.button("🚀 Trigger Google Drive Sync", type="primary"):
-        with st.spinner("Processing PDF catalogs directly..."):
+    st.markdown("<h4 style='color:#0f172a; font-weight:700; font-size:1.05rem; margin-top:10px;'>⚡ Cloud Index & Fast PDF Lookup</h4>", unsafe_allow_html=True)
+    
+    # 1. LIVE DATABASE METRICS DISPLAY
+    if engine is not None:
+        try:
+            col_info = engine.client.get_collection(COLLECTION_NAME)
+            total_vectors = col_info.points_count
+            brands_list = engine.get_all_brands()
+            total_brands = len(brands_list)
+        except Exception:
+            total_vectors = 0
+            total_brands = 0
+
+        m_col1, m_col2 = st.columns(2)
+        with m_col1:
+            st.metric(label="Total Indexed Brands", value=total_brands)
+        with m_col2:
+            st.metric(label="Searchable Vector Patches", value=f"{total_vectors:,}")
+            
+    st.divider()
+
+    # 2. QUICK KEYWORD CATALOG SEARCH
+    st.markdown("##### 🔎 Quick Catalog Keyword Search")
+    quick_kw = st.text_input("Search catalog name or brand directly:", placeholder="e.g. Louvers, Marbelo, Euro Pratik", key="quick_search_kw")
+    
+    if quick_kw:
+        if engine is not None:
+            # Query Qdrant for matching text payload entries
+            scroll_res, _ = engine.client.scroll(
+                collection_name=COLLECTION_NAME,
+                scroll_filter={"must": [{"key": "catalog", "match": {"text": quick_kw.strip()}}]},
+                limit=10,
+                with_payload=True,
+                with_vectors=False
+            )
+            
+            if scroll_res:
+                st.success(f"Found {len(scroll_res)} catalog reference matches for '{quick_kw}':")
+                for point in scroll_res:
+                    meta = point.payload
+                    st.markdown(f"📖 **Catalog:** `{meta.get('catalog')}` | 🏢 **Brand:** `{meta.get('company')}` | 📄 **Page:** {meta.get('page')}")
+            else:
+                st.info(f"No catalog names matching '{quick_kw}' found in current index.")
+
+    st.divider()
+
+    # 3. GOOGLE DRIVE AUTO-SYNC TRIGGER WITH PROGRESS STATUS
+    st.markdown("##### 🔄 Sync Google Drive Catalogs")
+    if st.button("🚀 Trigger Cloud PDF Indexing", type="primary", use_container_width=True):
+        progress_bar = st.progress(0, text="Connecting to Google Drive...")
+        
+        with st.spinner("Processing new PDF catalogs into Qdrant Cloud..."):
+            progress_bar.progress(30, text="Downloading new PDFs from Google Drive...")
+            
             if run_auto_sync():
+                progress_bar.progress(80, text="Updating neural vector embeddings...")
                 st.cache_resource.clear()
-                st.success("Indexing complete!")
+                progress_bar.progress(100, text="Indexing complete!")
+                st.success("✅ Database synchronized successfully! All new PDFs are live.")
                 st.rerun()
+            else:
+                progress_bar.empty()
+                st.error("❌ Sync failed. Please check Google Drive file permissions or GitHub Actions log.")
