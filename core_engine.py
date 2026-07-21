@@ -93,32 +93,54 @@ class AIVectorEngine:
         )
 
     def search(self, query_vector: list, top_k: int = 25, min_confidence: float = 0.40) -> list:
-        """Executes vector similarity search with page-level deduplication."""
+        """Executes vector similarity search safely across all qdrant-client versions."""
         matches = []
-        try:
-            response = self.client.query_points(
-                collection_name=COLLECTION_NAME,
-                query=query_vector,
-                limit=top_k,
-                score_threshold=min_confidence
-            )
-            points = response.points
-        except Exception:
-            points = self.client.search(
-                collection_name=COLLECTION_NAME,
-                query_vector=query_vector,
-                limit=top_k,
-                score_threshold=min_confidence
-            )
+        points = []
 
+        # 1. Primary Modern API (qdrant-client >= 1.10)
+        if hasattr(self.client, "query_points"):
+            try:
+                response = self.client.query_points(
+                    collection_name=COLLECTION_NAME,
+                    query=query_vector,
+                    limit=top_k,
+                    score_threshold=min_confidence
+                )
+                points = response.points
+            except Exception:
+                try:
+                    # Fallback if score_threshold syntax differs in specific sub-versions
+                    response = self.client.query_points(
+                        collection_name=COLLECTION_NAME,
+                        query=query_vector,
+                        limit=top_k
+                    )
+                    points = [p for p in response.points if getattr(p, "score", 0) >= min_confidence]
+                except Exception:
+                    points = []
+
+        # 2. Legacy API Fallback (qdrant-client < 1.10)
+        if not points and hasattr(self.client, "search"):
+            try:
+                points = self.client.search(
+                    collection_name=COLLECTION_NAME,
+                    query_vector=query_vector,
+                    limit=top_k,
+                    score_threshold=min_confidence
+                )
+            except Exception:
+                points = []
+
+        # 3. Deduplicate page matches
         seen_pages = set()
         for res in points:
-            page_key = f"{res.payload.get('catalog')}_p{res.payload.get('page')}"
+            payload = getattr(res, "payload", {}) or {}
+            page_key = f"{payload.get('catalog')}_p{payload.get('page')}"
             if page_key not in seen_pages:
                 seen_pages.add(page_key)
                 matches.append({
                     "score": float(res.score),
-                    "meta": res.payload
+                    "meta": payload
                 })
         return matches
 
