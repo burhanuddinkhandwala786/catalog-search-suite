@@ -151,7 +151,8 @@ def extract_and_index_qdrant():
 
             points_to_upsert = []
 
-            for page_num in range(len(doc)):
+            # Start loop at page_num = 1 (Page 2 of PDF) to skip cover pages entirely!
+            for page_num in range(1, len(doc)):
                 page = doc[page_num]
                 pix = page.get_pixmap(dpi=130)
 
@@ -171,7 +172,7 @@ def extract_and_index_qdrant():
                             vector=vector,
                             payload={
                                 "page_path": rel_image_path,
-                                "page": page_num + 1,
+                                "page": page_num + 1,  # Page 2, 3, 4...
                                 "catalog": pdf_filename,
                                 "company": brand,
                                 "file_id": f["id"],
