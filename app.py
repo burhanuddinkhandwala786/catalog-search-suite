@@ -394,6 +394,11 @@ with tab2:
             else:
                 st.info(f"No catalog names matching '{quick_kw}' found in current index.")
 
+    # See list of indexed catalogs in an expander
+    if 'all_catalogs' in locals() and all_catalogs:
+        with st.expander(f"📄 View All {len(all_catalogs)} Currently Indexed PDF Files"):
+            for idx, cat_name in enumerate(sorted(list(all_catalogs)), 1):
+                st.write(f"{idx}. {cat_name}")
     st.divider()
 
     # 3. GOOGLE DRIVE AUTO-SYNC TRIGGER VIA GITHUB ACTIONS DISPATCH
