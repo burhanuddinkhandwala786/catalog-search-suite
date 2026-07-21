@@ -216,53 +216,22 @@ def render_match_image(meta_dict):
         st.image(raw_path, use_container_width=True)
         return
 
-    # 2. Fetch directly from GitHub raw storage if image isn't on local container disk yet
+    # 2. Fetch directly from GitHub raw storage with cache busting
     if filename:
-        github_img_url = f"{RAW_GITHUB_BASE}/catalog_pages/{filename}"
+        github_img_url = f"{RAW_GITHUB_BASE}/catalog_pages/{filename}?v={latest_sha}"
+        headers = {"Cache-Control": "no-cache"}
         try:
-            res = requests.get(github_img_url, timeout=10)
+            res = requests.get(github_img_url, headers=headers, timeout=10)
             if res.status_code == 200:
                 st.image(res.content, use_container_width=True)
                 return
         except Exception:
             pass
 
-    # 3. Dynamic extraction from local PDF if available
+    # 3. Dynamic extraction fallback
     pdf_catalog = meta_dict.get("catalog", "")
     page_num = meta_dict.get("page", 1) - 1
     
-    possible_pdf_paths = [
-        os.path.join("pdf_catalogs", pdf_catalog),
-        os.path.join("pdf_catalogs", pdf_catalog.replace(" ", "_")),
-        pdf_catalog
-    ]
-    
-    doc = None
-    for pdf_p in possible_pdf_paths:
-        if pdf_p and os.path.exists(pdf_p):
-            try:
-                doc = fitz.open(pdf_p)
-                break
-            except Exception:
-                pass
-
-    if doc is None and "file_id" in meta_dict and meta_dict["file_id"]:
-        pdf_bytes = fetch_pdf_bytes_from_drive(meta_dict["file_id"])
-        if pdf_bytes:
-            try:
-                doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-            except Exception:
-                pass
-
-    if doc is not None:
-        try:
-            page = doc[page_num]
-            pix = page.get_pixmap(dpi=140)
-            st.image(pix.tobytes("jpg"), use_container_width=True)
-            return
-        except Exception as e:
-            st.warning(f"Error rendering page {page_num + 1}: {e}")
-
     st.info(f"📍 **Match Reference:** {pdf_catalog} — **Page {page_num + 1}**")
 
 
