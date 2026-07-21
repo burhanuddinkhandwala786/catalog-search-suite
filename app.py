@@ -22,6 +22,10 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
+# --- SESSION STATE HELPER ---
+def st_session_state_wrapper():
+    return st.session_state
+
 # --- ELEGANT ENTERPRISE UI STYLING ---
 st.markdown("""
 <style>
@@ -240,71 +244,85 @@ with tab1:
         if search_file:
             raw_pil_img = Image.open(io.BytesIO(search_file.getvalue())).convert("RGB")
             
-            st.markdown("<p style='font-weight:600; color:#334155; font-size:0.88rem; margin-top:16px;'>Crop Target Texture or Pattern Area:</p>", unsafe_allow_html=True)
+            st.markdown("<p style='font-weight:600; color:#334155; font-size:0.88rem; margin-top:16px;'>1. Adjust Crop Area over Pattern / Product:</p>", unsafe_allow_html=True)
+            
+            # Use realtime_update=True so the cropper canvas tracks handle moves accurately
             cropped_img = st_cropper(
                 raw_pil_img, 
-                realtime_update=False, 
+                realtime_update=True, 
                 box_color='#b8976c', 
-                aspect_ratio=None
+                aspect_ratio=None,
+                return_type='image'
             )
             
-            with st.spinner("Searching neural database for visual matches..."):
-                query_vector = engine.get_single_embedding(cropped_img)
-                confidence_threshold = min_confidence_slider / 100.0
-                raw_matches = engine.search(query_vector, top_k=25, min_confidence=confidence_threshold)
-                
-                filtered_matches = []
-                for m in raw_matches:
-                    meta = m.get("meta", {})
-                    company_match = (selected_company == "All Brand Libraries" or meta.get("company", "General") == selected_company)
-                    catalog_match = (not catalog_keyword or catalog_keyword.lower() in meta.get("catalog", "").lower())
-                    if company_match and catalog_match:
-                        filtered_matches.append(m)
-                
-                exact_matches = [m for m in filtered_matches if m["score"] >= 0.50]
-                high_confidence_matches = [m for m in filtered_matches if confidence_threshold <= m["score"] < 0.50]
-            
+            # 2. EXPLICIT BUTTON: Guarantees Streamlit captures the exact updated crop!
             st.markdown("<br>", unsafe_allow_html=True)
+            trigger_search = st.button("🔍 Search Cropped Pattern", type="primary", use_container_width=True)
             
-            if exact_matches:
-                st.markdown("<h4 style='color:#0f172a; font-weight:700; font-size:1.1rem;'>🎯 Exact Match Results</h4>", unsafe_allow_html=True)
-                for i, res in enumerate(exact_matches[:3]):
-                    score_pct = res["score"] * 100
-                    st.markdown(f"""
-                    <div class="match-container-exact">
-                        <div class="match-header-tag tag-exact">
-                            <span>Direct Match #{i+1}</span> • <span>{score_pct:.1f}% Confidence</span>
-                        </div>
-                        <div class="meta-details-grid">
-                            <div class="meta-item-box">🏢 <strong>Brand:</strong> {res['meta'].get('company', 'General')}</div>
-                            <div class="meta-item-box">📖 <strong>Catalog:</strong> {res['meta'].get('catalog', 'N/A')}</div>
-                            <div class="meta-item-box">📄 <strong>Location:</strong> Page {res['meta'].get('page', 1)}</div>
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
-                    render_match_image(res["meta"])
-                    st.divider()
+            if trigger_search or "last_cropped" not in st_session_state_wrapper():
+                # High-Quality Upsampling for tiny crops (Preserves shape/texture detail)
+                if cropped_img.width < 224 or cropped_img.height < 224:
+                    proc_img = cropped_img.resize((448, 448), Image.Resampling.BICUBIC)
+                else:
+                    proc_img = cropped_img
+
+                with st.spinner("Searching neural database for visual matches..."):
+                    query_vector = engine.get_single_embedding(proc_img)
+                    confidence_threshold = min_confidence_slider / 100.0
+                    raw_matches = engine.search(query_vector, top_k=25, min_confidence=confidence_threshold)
                     
-            elif high_confidence_matches:
-                st.markdown("<h4 style='color:#0f172a; font-weight:700; font-size:1.1rem;'>🎨 High Confidence Alternatives</h4>", unsafe_allow_html=True)
-                for i, res in enumerate(high_confidence_matches[:3]):
-                    score_pct = res["score"] * 100
-                    st.markdown(f"""
-                    <div class="match-container-alt">
-                        <div class="match-header-tag tag-alt">
-                            <span>Candidate #{i+1}</span> • <span>{score_pct:.1f}% Visual Similarity</span>
+                    filtered_matches = []
+                    for m in raw_matches:
+                        meta = m.get("meta", {})
+                        company_match = (selected_company == "All Brand Libraries" or meta.get("company", "General") == selected_company)
+                        catalog_match = (not catalog_keyword or catalog_keyword.lower() in meta.get("catalog", "").lower())
+                        if company_match and catalog_match:
+                            filtered_matches.append(m)
+                    
+                    exact_matches = [m for m in filtered_matches if m["score"] >= 0.50]
+                    high_confidence_matches = [m for m in filtered_matches if confidence_threshold <= m["score"] < 0.50]
+                
+                st.markdown("<br>", unsafe_allow_html=True)
+                
+                if exact_matches:
+                    st.markdown("<h4 style='color:#0f172a; font-weight:700; font-size:1.1rem;'>🎯 Exact Match Results</h4>", unsafe_allow_html=True)
+                    for i, res in enumerate(exact_matches[:3]):
+                        score_pct = res["score"] * 100
+                        st.markdown(f"""
+                        <div class="match-container-exact">
+                            <div class="match-header-tag tag-exact">
+                                <span>Direct Match #{i+1}</span> • <span>{score_pct:.1f}% Confidence</span>
+                            </div>
+                            <div class="meta-details-grid">
+                                <div class="meta-item-box">🏢 <strong>Brand:</strong> {res['meta'].get('company', 'General')}</div>
+                                <div class="meta-item-box">📖 <strong>Catalog:</strong> {res['meta'].get('catalog', 'N/A')}</div>
+                                <div class="meta-item-box">📄 <strong>Location:</strong> Page {res['meta'].get('page', 1)}</div>
+                            </div>
                         </div>
-                        <div class="meta-details-grid">
-                            <div class="meta-item-box">🏢 <strong>Brand:</strong> {res['meta'].get('company', 'General')}</div>
-                            <div class="meta-item-box">📖 <strong>Catalog:</strong> {res['meta'].get('catalog', 'N/A')}</div>
-                            <div class="meta-item-box">📄 <strong>Location:</strong> Page {res['meta'].get('page', 1)}</div>
+                        """, unsafe_allow_html=True)
+                        render_match_image(res["meta"])
+                        st.divider()
+                        
+                elif high_confidence_matches:
+                    st.markdown("<h4 style='color:#0f172a; font-weight:700; font-size:1.1rem;'>🎨 High Confidence Alternatives</h4>", unsafe_allow_html=True)
+                    for i, res in enumerate(high_confidence_matches[:3]):
+                        score_pct = res["score"] * 100
+                        st.markdown(f"""
+                        <div class="match-container-alt">
+                            <div class="match-header-tag tag-alt">
+                                <span>Candidate #{i+1}</span> • <span>{score_pct:.1f}% Visual Similarity</span>
+                            </div>
+                            <div class="meta-details-grid">
+                                <div class="meta-item-box">🏢 <strong>Brand:</strong> {res['meta'].get('company', 'General')}</div>
+                                <div class="meta-item-box">📖 <strong>Catalog:</strong> {res['meta'].get('catalog', 'N/A')}</div>
+                                <div class="meta-item-box">📄 <strong>Location:</strong> Page {res['meta'].get('page', 1)}</div>
+                            </div>
                         </div>
-                    </div>
-                    """, unsafe_allow_html=True)
-                    render_match_image(res["meta"])
-                    st.divider()
-            else:
-                st.info(f"ℹ️ **No matching product found in current catalogs above {min_confidence_slider}% confidence.**\n\nIf this is a new product, please ensure its PDF catalog is uploaded to Google Drive and synced.")
+                        """, unsafe_allow_html=True)
+                        render_match_image(res["meta"])
+                        st.divider()
+                else:
+                    st.info(f"ℹ️ **No matching product found in current catalogs above {min_confidence_slider}% confidence.**\n\nIf this is a new product, please ensure its PDF catalog is uploaded to Google Drive and synced.")
 
 with tab2:
     st.markdown("<h4 style='color:#0f172a; font-weight:700; font-size:1.05rem; margin-top:10px;'>⚡ Cloud PDF Indexer</h4>", unsafe_allow_html=True)
