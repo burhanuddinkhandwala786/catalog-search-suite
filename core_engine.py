@@ -8,14 +8,13 @@ from qdrant_client.models import Distance, VectorParams, PointStruct
 
 COLLECTION_NAME = "catalog_embeddings"
 
+
 def get_secret(key_name):
-    """Safely retrieves secrets without throwing StreamlitSecretNotFoundError."""
-    # 1. Check environment variables (GitHub Actions / Local Terminal / Render)
+    """Safely retrieves secrets across both GitHub Actions (env) and Streamlit Cloud (secrets)."""
     val = os.environ.get(key_name)
     if val:
         return val
 
-    # 2. Check Streamlit secrets safely without throwing an exception
     try:
         import streamlit as st
         if hasattr(st, "secrets") and key_name in st.secrets:
@@ -28,7 +27,7 @@ def get_secret(key_name):
 
 class AIVectorEngine:
     def __init__(self):
-        # Neural feature extractor setup
+        # Load DINOv2 visual feature extractor
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.model = torch.hub.load("facebookresearch/dinov2", "dinov2_vits14").to(self.device)
         self.model.eval()
@@ -39,12 +38,12 @@ class AIVectorEngine:
             T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ])
 
-        # Safely fetch Qdrant credentials
+        # Fetch Qdrant connection credentials
         qdrant_url = get_secret("QDRANT_URL")
         qdrant_api_key = get_secret("QDRANT_API_KEY")
 
         if not qdrant_url or not qdrant_api_key:
-            raise ValueError("Missing QDRANT_URL or QDRANT_API_KEY. Please verify secrets are configured.")
+            raise ValueError("Missing QDRANT_URL or QDRANT_API_KEY credentials.")
 
         self.client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key)
         self._ensure_collection()
@@ -83,15 +82,27 @@ class AIVectorEngine:
         )
 
     def search(self, query_vector: list, top_k: int = 15, min_confidence: float = 0.10) -> list:
-        results = self.client.search(
-            collection_name=COLLECTION_NAME,
-            query_vector=query_vector,
-            limit=top_k,
-            score_threshold=min_confidence
-        )
-        
+        """Executes vector similarity search safely across all qdrant-client versions."""
         matches = []
-        for res in results:
+        try:
+            # Modern API (qdrant-client >= 1.10.0)
+            response = self.client.query_points(
+                collection_name=COLLECTION_NAME,
+                query=query_vector,
+                limit=top_k,
+                score_threshold=min_confidence
+            )
+            points = response.points
+        except Exception:
+            # Legacy API fallback
+            points = self.client.search(
+                collection_name=COLLECTION_NAME,
+                query_vector=query_vector,
+                limit=top_k,
+                score_threshold=min_confidence
+            )
+
+        for res in points:
             matches.append({
                 "score": float(res.score),
                 "meta": res.payload
