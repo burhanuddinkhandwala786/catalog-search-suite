@@ -9,6 +9,7 @@ import faiss
 import torch
 import warnings
 import requests
+import base64
 from core_engine import AIVectorEngine
 from sync_drive import run_auto_sync, fetch_pdf_bytes_from_drive
 
@@ -17,7 +18,9 @@ warnings.filterwarnings("ignore")
 # Prevent CPU bottlenecking on shared cloud hardware
 torch.set_num_threads(4)
 
-RAW_GITHUB_BASE = "https://raw.githubusercontent.com/burhanuddinkhandwala786/catalog-search-suite/main"
+REPO_OWNER = "burhanuddinkhandwala786"
+REPO_NAME = "catalog-search-suite"
+RAW_GITHUB_BASE = f"https://raw.githubusercontent.com/{REPO_OWNER}/{REPO_NAME}/main"
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -202,49 +205,46 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-# Dynamic Cloud Image Renderer with GitHub Fallback
+# Fetch latest commit SHA directly from GitHub API
+def get_latest_github_commit():
+    try:
+        url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/commits/main"
+        headers = {"User-Agent": "Streamlit-Catalog-App"}
+        gh_token = st.secrets.get("GITHUB_TOKEN")
+        if gh_token:
+            headers["Authorization"] = f"Bearer {gh_token}"
+            
+        res = requests.get(url, headers=headers, timeout=10)
+        if res.status_code == 200:
+            return res.json().get("sha", "latest")
+    except Exception:
+        pass
+    return "latest"
+
+
+# Render match image directly from GitHub raw media URL
 def render_match_image(meta_dict):
     raw_path = meta_dict.get("page_path", "")
     filename = os.path.basename(raw_path) if raw_path else ""
-    local_img_path = os.path.join("catalog_pages", filename) if filename else ""
+    latest_sha = get_latest_github_commit()
     
-    # 1. Check local container disk
-    if local_img_path and os.path.exists(local_img_path):
-        st.image(local_img_path, use_container_width=True)
-        return
-    elif raw_path and os.path.exists(raw_path):
-        st.image(raw_path, use_container_width=True)
-        return
-
-    # 2. Fetch directly from GitHub raw storage with cache busting
     if filename:
-        github_img_url = f"{RAW_GITHUB_BASE}/catalog_pages/{filename}?v={latest_sha}"
-        headers = {"Cache-Control": "no-cache"}
+        github_img_url = f"https://raw.githubusercontent.com/{REPO_OWNER}/{REPO_NAME}/{latest_sha}/catalog_pages/{filename}"
         try:
-            res = requests.get(github_img_url, headers=headers, timeout=10)
+            res = requests.get(github_img_url, timeout=10)
             if res.status_code == 200:
-                st.image(res.content, use_container_width=True)
+                st.image(res.content, width="stretch")
                 return
         except Exception:
             pass
 
-    # 3. Dynamic extraction fallback
-    pdf_catalog = meta_dict.get("catalog", "")
-    page_num = meta_dict.get("page", 1) - 1
-    
-    st.info(f"📍 **Match Reference:** {pdf_catalog} — **Page {page_num + 1}**")
+    # Local disk fallback
+    local_img_path = os.path.join("catalog_pages", filename) if filename else ""
+    if local_img_path and os.path.exists(local_img_path):
+        st.image(local_img_path, width="stretch")
+        return
 
-
-# Fetch latest commit SHA to detect GitHub updates automatically
-def get_latest_github_commit():
-    try:
-        url = "https://api.github.com/repos/burhanuddinkhandwala786/catalog-search-suite/commits/main"
-        res = requests.get(url, timeout=5)
-        if res.status_code == 200:
-            return res.json().get("sha", "")
-    except Exception:
-        pass
-    return "default_sha"
+    st.info(f"📍 **Match Reference:** {meta_dict.get('catalog', '')} — **Page {meta_dict.get('page', 1)}**")
 
 
 # Engine Initialization
@@ -253,35 +253,33 @@ def load_engine():
     return AIVectorEngine()
 
 
-# Remote index loader with cache-busting headers
-@st.cache_resource(show_spinner="Syncing database with GitHub...")
-def load_remote_index(commit_sha):
-    # Cache-busting URL query parameters using the latest commit SHA
-    index_url = f"{RAW_GITHUB_BASE}/faiss_catalog.index?v={commit_sha}"
-    meta_url = f"{RAW_GITHUB_BASE}/catalog_meta.pkl?v={commit_sha}"
-    
-    # Headers to bypass GitHub CDN edge caching
-    headers = {
-        "Cache-Control": "no-cache, no-store, must-revalidate",
-        "Pragma": "no-cache",
-        "Expires": "0"
-    }
-    
+# Direct GitHub API index loader using the commit SHA as cache key
+@st.cache_resource(show_spinner="Downloading latest database from GitHub...")
+def load_remote_index_via_api(commit_sha):
+    gh_token = st.secrets.get("GITHUB_TOKEN")
+    headers = {"User-Agent": "Streamlit-Catalog-App"}
+    if gh_token:
+        headers["Authorization"] = f"Bearer {gh_token}"
+        
+    index_url = f"https://raw.githubusercontent.com/{REPO_OWNER}/{REPO_NAME}/{commit_sha}/faiss_catalog.index"
+    meta_url = f"https://raw.githubusercontent.com/{REPO_OWNER}/{REPO_NAME}/{commit_sha}/catalog_meta.pkl"
+
     try:
         idx_res = requests.get(index_url, headers=headers, timeout=30)
         meta_res = requests.get(meta_url, headers=headers, timeout=30)
-        
+
         if idx_res.status_code == 200 and meta_res.status_code == 200:
-            with open("faiss_catalog.index", "wb") as f:
+            tmp_index_path = f"/tmp/faiss_{commit_sha[:7]}.index"
+            with open(tmp_index_path, "wb") as f:
                 f.write(idx_res.content)
-            
+
             meta = pickle.loads(meta_res.content)
-            idx = faiss.read_index("faiss_catalog.index")
+            idx = faiss.read_index(tmp_index_path)
             return idx, meta
     except Exception as e:
-        st.error(f"Failed to fetch remote catalog index: {e}")
-    
-    # Fallback to local files if offline
+        st.error(f"Error downloading vector database: {e}")
+
+    # Local disk fallback
     if os.path.exists("faiss_catalog.index") and os.path.exists("catalog_meta.pkl"):
         try:
             idx = faiss.read_index("faiss_catalog.index")
@@ -290,13 +288,13 @@ def load_remote_index(commit_sha):
             return idx, meta
         except Exception:
             pass
-            
+
     return None, []
 
 
 engine = load_engine()
 latest_sha = get_latest_github_commit()
-index, metadata = load_remote_index(latest_sha)
+index, metadata = load_remote_index_via_api(latest_sha)
 
 if index is not None and len(metadata) > 0:
     engine.index = index
@@ -330,15 +328,14 @@ with tab1:
         with col_sync:
             if st.button("🔄 Sync Drive", use_container_width=True):
                 gh_token = st.secrets.get("GITHUB_TOKEN")
-                repo_owner = st.secrets.get("REPO_OWNER")
-                repo_name = st.secrets.get("REPO_NAME")
                 
-                if gh_token and repo_owner and repo_name:
+                if gh_token:
                     with st.spinner("Triggering GitHub Actions cloud sync..."):
-                        url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/dispatches"
+                        url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/dispatches"
                         headers = {
                             "Authorization": f"Bearer {gh_token}",
-                            "Accept": "application/vnd.github.v3+json"
+                            "Accept": "application/vnd.github.v3+json",
+                            "User-Agent": "Streamlit-Catalog-App"
                         }
                         data = {"event_type": "drive-updated"}
                         res = requests.post(url, json=data, headers=headers)
