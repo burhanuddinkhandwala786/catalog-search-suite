@@ -4,23 +4,15 @@ from PIL import Image
 from streamlit_cropper import st_cropper
 import io
 import os
-import pickle
-import faiss
-import torch
-import warnings
 import requests
-import base64
-from core_engine import AIVectorEngine
+import warnings
+from core_engine import AIVectorEngine, COLLECTION_NAME
 from sync_drive import run_auto_sync, fetch_pdf_bytes_from_drive
 
 warnings.filterwarnings("ignore")
 
-# Prevent CPU bottlenecking on shared cloud hardware
-torch.set_num_threads(4)
-
 REPO_OWNER = "burhanuddinkhandwala786"
 REPO_NAME = "catalog-search-suite"
-RAW_GITHUB_BASE = f"https://raw.githubusercontent.com/{REPO_OWNER}/{REPO_NAME}/main"
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -73,7 +65,7 @@ st.markdown("""
         margin: 0;
     }
 
-    /* --- DROPDOWN (SELECTBOX) STYLING --- */
+    /* DROPDOWN STYLING */
     div[data-baseweb="select"] {
         border-radius: 8px !important;
         border: 1.5px solid #cbd5e1 !important;
@@ -88,16 +80,7 @@ st.markdown("""
         font-weight: 600 !important;
     }
 
-    /* --- LABELS --- */
-    .stSelectbox label, .stFileUploader label {
-        font-weight: 700 !important;
-        color: #1e293b !important;
-        font-size: 0.88rem !important;
-        letter-spacing: 0.01em;
-        margin-bottom: 6px !important;
-    }
-
-    /* --- BUTTON STYLING --- */
+    /* BUTTON STYLING */
     .stButton>button {
         background-color: #b8976c !important;
         color: #ffffff !important;
@@ -117,18 +100,7 @@ st.markdown("""
         box-shadow: 0 4px 10px rgba(184, 151, 108, 0.35) !important;
     }
 
-    /* --- FILE UPLOADER STYLING --- */
-    [data-testid="stFileUploader"] {
-        background-color: #f8fafc !important;
-        border: 1.5px dashed #cbd5e1 !important;
-        border-radius: 10px !important;
-        padding: 10px !important;
-    }
-    [data-testid="stFileUploader"]:hover {
-        border-color: #b8976c !important;
-    }
-
-    /* --- MATCH CARDS & TAGS --- */
+    /* MATCH CARDS & TAGS */
     .match-container-exact {
         background: #fcfbf9;
         border: 1px solid #e2d9cd;
@@ -185,127 +157,52 @@ st.markdown("""
     .meta-item-box strong {
         color: #0f172a;
     }
-
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 12px;
-        border-bottom: 1px solid #e2e8f0;
-    }
-    .stTabs [data-baseweb="tab"] {
-        height: 44px;
-        border-radius: 6px 6px 0 0;
-        color: #64748b;
-        font-weight: 600;
-        font-size: 0.88rem;
-    }
-    .stTabs [aria-selected="true"] {
-        color: #b8976c !important;
-        border-bottom-color: #b8976c !important;
-    }
 </style>
 """, unsafe_allow_html=True)
 
 
-# Fetch latest commit SHA directly from GitHub API
-def get_latest_github_commit():
-    try:
-        url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/commits/main"
-        headers = {"User-Agent": "Streamlit-Catalog-App"}
-        gh_token = st.secrets.get("GITHUB_TOKEN")
-        if gh_token:
-            headers["Authorization"] = f"Bearer {gh_token}"
-            
-        res = requests.get(url, headers=headers, timeout=10)
-        if res.status_code == 200:
-            return res.json().get("sha", "latest")
-    except Exception:
-        pass
-    return "latest"
-
-
-# Render match image directly from GitHub raw media URL
+# Render match image safely
 def render_match_image(meta_dict):
     raw_path = meta_dict.get("page_path", "")
     filename = os.path.basename(raw_path) if raw_path else ""
-    latest_sha = get_latest_github_commit()
-    
-    if filename:
-        github_img_url = f"https://raw.githubusercontent.com/{REPO_OWNER}/{REPO_NAME}/{latest_sha}/catalog_pages/{filename}"
-        try:
-            res = requests.get(github_img_url, timeout=10)
-            if res.status_code == 200:
-                st.image(res.content, width="stretch")
-                return
-        except Exception:
-            pass
 
-    # Local disk fallback
+    # 1. Check local container disk
     local_img_path = os.path.join("catalog_pages", filename) if filename else ""
     if local_img_path and os.path.exists(local_img_path):
         st.image(local_img_path, width="stretch")
         return
+    elif raw_path and os.path.exists(raw_path):
+        st.image(raw_path, width="stretch")
+        return
+
+    # 2. Try fetching PDF page directly from Drive
+    if "file_id" in meta_dict and meta_dict["file_id"]:
+        pdf_bytes = fetch_pdf_bytes_from_drive(meta_dict["file_id"])
+        if pdf_bytes:
+            try:
+                page_num = meta_dict.get("page", 1) - 1
+                doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+                page = doc[page_num]
+                pix = page.get_pixmap(dpi=140)
+                st.image(pix.tobytes("jpg"), width="stretch")
+                return
+            except Exception:
+                pass
 
     st.info(f"📍 **Match Reference:** {meta_dict.get('catalog', '')} — **Page {meta_dict.get('page', 1)}**")
 
 
 # Engine Initialization
-@st.cache_resource(show_spinner="Loading Visual Recognition Engine...")
+@st.cache_resource(show_spinner="Connecting to Visual Search Engine...")
 def load_engine():
-    return AIVectorEngine()
-
-
-# Direct GitHub API index loader using the commit SHA as cache key
-@st.cache_resource(show_spinner="Downloading latest database from GitHub...")
-def load_remote_index_via_api(commit_sha):
-    gh_token = st.secrets.get("GITHUB_TOKEN")
-    headers = {"User-Agent": "Streamlit-Catalog-App"}
-    if gh_token:
-        headers["Authorization"] = f"Bearer {gh_token}"
-        
-    index_url = f"https://raw.githubusercontent.com/{REPO_OWNER}/{REPO_NAME}/{commit_sha}/faiss_catalog.index"
-    meta_url = f"https://raw.githubusercontent.com/{REPO_OWNER}/{REPO_NAME}/{commit_sha}/catalog_meta.pkl"
-
     try:
-        idx_res = requests.get(index_url, headers=headers, timeout=30)
-        meta_res = requests.get(meta_url, headers=headers, timeout=30)
-
-        if idx_res.status_code == 200 and meta_res.status_code == 200:
-            tmp_index_path = f"/tmp/faiss_{commit_sha[:7]}.index"
-            with open(tmp_index_path, "wb") as f:
-                f.write(idx_res.content)
-
-            meta = pickle.loads(meta_res.content)
-            idx = faiss.read_index(tmp_index_path)
-            return idx, meta
+        return AIVectorEngine()
     except Exception as e:
-        st.error(f"Error downloading vector database: {e}")
-
-    # Local disk fallback
-    if os.path.exists("faiss_catalog.index") and os.path.exists("catalog_meta.pkl"):
-        try:
-            idx = faiss.read_index("faiss_catalog.index")
-            with open("catalog_meta.pkl", "rb") as f:
-                meta = pickle.load(f)
-            return idx, meta
-        except Exception:
-            pass
-
-    return None, []
+        st.error(f"Engine connection failed: {e}")
+        return None
 
 
 engine = load_engine()
-latest_sha = get_latest_github_commit()
-index, metadata = load_remote_index_via_api(latest_sha)
-
-if index is not None and len(metadata) > 0:
-    engine.index = index
-    engine.metadata = metadata
-    st.session_state["catalog_indexed"] = True
-else:
-    st.session_state["catalog_indexed"] = False
-
-PAGE_DIR = "catalog_pages"
-INDEX_FILE = "faiss_catalog.index"
-META_FILE = "catalog_meta.pkl"
 
 st.markdown("""
 <div class="app-header">
@@ -318,8 +215,12 @@ tab1, tab2 = st.tabs(["🔍 Visual Pattern Search", "⚙️ Index Management"])
 
 # TAB 1: VISUAL SEARCH
 with tab1:
-    if st.session_state.get("catalog_indexed", False):
-        companies = sorted(list(set(m.get("company", "General") for m in engine.metadata)))
+    if engine is not None:
+        try:
+            companies = engine.get_all_brands()
+        except Exception:
+            companies = []
+            
         companies.insert(0, "All Brand Libraries")
         
         col_filter, col_sync = st.columns([3.5, 1], vertical_alignment="bottom")
@@ -328,7 +229,6 @@ with tab1:
         with col_sync:
             if st.button("🔄 Sync Drive", use_container_width=True):
                 gh_token = st.secrets.get("GITHUB_TOKEN")
-                
                 if gh_token:
                     with st.spinner("Triggering GitHub Actions cloud sync..."):
                         url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/dispatches"
@@ -351,8 +251,6 @@ with tab1:
                             st.cache_resource.clear()
                             st.success("Catalogs synchronized!")
                             st.rerun()
-                        else:
-                            st.info("Database is up to date.")
 
         search_file = st.file_uploader("Upload or Capture Reference Image", type=["jpg", "png", "jpeg"])
         
@@ -367,122 +265,69 @@ with tab1:
                 aspect_ratio=None
             )
             
-            with st.spinner("Searching neural index for visual matches..."):
-                q_emb = engine.get_single_embedding(cropped_img)
-                raw_matches = engine.search(q_emb, top_k=15, min_confidence=0.10)
+            with st.spinner("Searching neural database for visual matches..."):
+                query_vector = engine.get_single_embedding(cropped_img)
+                raw_matches = engine.search(query_vector, top_k=15, min_confidence=0.10)
                 
                 filtered_matches = [
                     m for m in raw_matches 
                     if selected_company == "All Brand Libraries" or m["meta"].get("company", "General") == selected_company
                 ]
                 
-                exact_matches = [m for m in filtered_matches if m["score"] >= 0.40]
-                alternative_matches = [m for m in filtered_matches if 0.10 <= m["score"] < 0.40]
+                exact_matches = [m for m in filtered_matches if m["score"] >= 0.50]
+                alternative_matches = [m for m in filtered_matches if 0.10 <= m["score"] < 0.50]
             
             st.markdown("<br>", unsafe_allow_html=True)
             
             if exact_matches:
-    st.markdown("<h4 style='color:#0f172a; font-weight:700;'>🎯 Direct Catalog Match</h4>", unsafe_allow_html=True)
-    for i, res in enumerate(exact_matches[:3]):
-        meta = res['meta']
-        score_pct = res["score"] * 100
-        st.markdown(f"""
-        <div class="match-container-exact">
-            <div class="match-header-tag tag-exact">
-                <span>Exact Match #{i+1}</span> • <span>{score_pct:.1f}% Confidence</span>
-            </div>
-            <div class="meta-details-grid">
-                <div class="meta-item-box">🏢 <strong>Brand / Company:</strong> {meta.get('company', 'General')}</div>
-                <div class="meta-item-box">📖 <strong>Catalog File:</strong> {meta.get('catalog', 'N/A')}</div>
-                <div class="meta-item-box">📍 <strong>Order Location:</strong> Page {meta.get('page', 1)}</div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        render_match_image(meta)
-        st.divider()
-
-elif alternative_matches:
-    st.info("💡 **Exact item not found in current active catalogs. Showing top 3 closest matching alternatives for direct ordering:**")
-    st.markdown("<h4 style='color:#0f172a; font-weight:700;'>🎨 Recommended Closest Alternatives</h4>", unsafe_allow_html=True)
-    for i, res in enumerate(alternative_matches[:3]):
-        meta = res['meta']
-        score_pct = res["score"] * 100
-        st.markdown(f"""
-        <div class="match-container-alt">
-            <div class="match-header-tag tag-alt">
-                <span>Alternative Match #{i+1}</span> • <span>{score_pct:.1f}% Visual Similarity</span>
-            </div>
-            <div class="meta-details-grid">
-                <div class="meta-item-box">🏢 <strong>Brand / Company:</strong> {meta.get('company', 'General')}</div>
-                <div class="meta-item-box">📖 <strong>Catalog File:</strong> {meta.get('catalog', 'N/A')}</div>
-                <div class="meta-item-box">📍 <strong>Order Location:</strong> Page {meta.get('page', 1)}</div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        render_match_image(meta)
-        st.divider()
+                st.markdown("<h4 style='color:#0f172a; font-weight:700; font-size:1.1rem;'>🎯 Exact Match Results</h4>", unsafe_allow_html=True)
+                for i, res in enumerate(exact_matches[:3]):
+                    score_pct = res["score"] * 100
+                    st.markdown(f"""
+                    <div class="match-container-exact">
+                        <div class="match-header-tag tag-exact">
+                            <span>Direct Match #{i+1}</span> • <span>{score_pct:.1f}% Confidence</span>
+                        </div>
+                        <div class="meta-details-grid">
+                            <div class="meta-item-box">🏢 <strong>Brand:</strong> {res['meta'].get('company', 'General')}</div>
+                            <div class="meta-item-box">📖 <strong>Catalog:</strong> {res['meta'].get('catalog', 'N/A')}</div>
+                            <div class="meta-item-box">📄 <strong>Location:</strong> Page {res['meta'].get('page', 1)}</div>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    render_match_image(res["meta"])
+                    st.divider()
+                    
+            elif alternative_matches:
+                st.info("💡 **No exact product match found. Displaying closest matching alternatives:**")
+                st.markdown("<h4 style='color:#0f172a; font-weight:700; font-size:1.1rem;'>🎨 Recommended Alternatives</h4>", unsafe_allow_html=True)
+                for i, res in enumerate(alternative_matches[:3]):
+                    score_pct = res["score"] * 100
+                    st.markdown(f"""
+                    <div class="match-container-alt">
+                        <div class="match-header-tag tag-alt">
+                            <span>Alternative #{i+1}</span> • <span>{score_pct:.1f}% Visual Similarity</span>
+                        </div>
+                        <div class="meta-details-grid">
+                            <div class="meta-item-box">🏢 <strong>Brand:</strong> {res['meta'].get('company', 'General')}</div>
+                            <div class="meta-item-box">📖 <strong>Catalog:</strong> {res['meta'].get('catalog', 'N/A')}</div>
+                            <div class="meta-item-box">📄 <strong>Location:</strong> Page {res['meta'].get('page', 1)}</div>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    render_match_image(res["meta"])
+                    st.divider()
             else:
                 st.warning(f"❌ No matching pattern found under '{selected_company}'. Try adjusting crop or selecting 'All Brand Libraries'.")
     else:
-        st.info("No catalog index loaded. Click 'Sync Drive' above or use Tab 2 to process PDFs dynamically.")
-        if st.button("🚀 Initial Cloud Sync", type="primary"):
-            with st.spinner("Processing PDF catalogs directly in web app..."):
-                if run_auto_sync():
-                    st.cache_resource.clear()
-                    st.success("Indexing complete!")
-                    st.rerun()
+        st.error("Engine failed to initialize. Please verify your Qdrant secrets in Streamlit Cloud.")
 
-# TAB 2: MANUAL WEB UPLOADER
+# TAB 2: MANUAL WEB INDEXER
 with tab2:
     st.markdown("<h4 style='color:#0f172a; font-weight:700; font-size:1.05rem; margin-top:10px;'>⚡ Cloud PDF Indexer</h4>", unsafe_allow_html=True)
-    company_name = st.text_input("Brand / Manufacturer Name Tag:", value="General")
-    uploaded_pdfs = st.file_uploader("Upload PDF Catalogs to Generate Embeddings", type=["pdf"], accept_multiple_files=True)
-    
-    if uploaded_pdfs and st.button("Process & Update Vector Database", type="primary"):
-        with st.spinner("Extracting catalog pages & generating visual embeddings in web app memory..."):
-            os.makedirs(PAGE_DIR, exist_ok=True)
-            pages_to_embed = []
-            new_metadata = []
-            
-            existing_meta = engine.metadata if os.path.exists(META_FILE) else []
-
-            for pdf_file in uploaded_pdfs:
-                doc = fitz.open(stream=pdf_file.read(), filetype="pdf")
-                safe_name = pdf_file.name.replace(" ", "_")
-                
-                for page_num in range(len(doc)):
-                    page = doc[page_num]
-                    pix = page.get_pixmap(dpi=130)
-                    page_path = f"{PAGE_DIR}/{safe_name}_page_{page_num+1}.jpg"
-                    pix.save(page_path)
-                    
-                    pil_img = Image.open(page_path).convert("RGB")
-                    pages_to_embed.append(pil_img)
-                    new_metadata.append({
-                        "page_path": page_path,
-                        "page": page_num + 1,
-                        "catalog": pdf_file.name,
-                        "company": company_name
-                    })
-
-            if pages_to_embed:
-                new_embeddings = engine.get_batch_embeddings(pages_to_embed, batch_size=16)
-                
-                if os.path.exists(INDEX_FILE):
-                    existing_index = faiss.read_index(INDEX_FILE)
-                    existing_index.add(new_embeddings)
-                    engine.index = existing_index
-                else:
-                    engine.create_index(new_embeddings, new_metadata)
-
-                all_meta = existing_meta + new_metadata
-                engine.metadata = all_meta
-                
-                faiss.write_index(engine.index, INDEX_FILE)
-                with open(META_FILE, "wb") as f:
-                    pickle.dump(all_meta, f)
-                    
+    if st.button("🚀 Trigger Google Drive Sync", type="primary"):
+        with st.spinner("Processing PDF catalogs directly..."):
+            if run_auto_sync():
                 st.cache_resource.clear()
-                st.session_state["catalog_indexed"] = True
-                st.success(f"Indexed {len(pages_to_embed)} catalog pages successfully!")
+                st.success("Indexing complete!")
                 st.rerun()
