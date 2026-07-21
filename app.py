@@ -161,6 +161,13 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
+# --- CACHED DRIVE DOWNLOADER ---
+# Prevents re-downloading the entire PDF every time an image renders
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_pdf_bytes_cached(file_id):
+    return fetch_pdf_bytes_from_drive(file_id)
+
+
 # Render match image safely
 def render_match_image(meta_dict):
     raw_path = meta_dict.get("page_path", "")
@@ -169,22 +176,22 @@ def render_match_image(meta_dict):
     # 1. Check local container disk
     local_img_path = os.path.join("catalog_pages", filename) if filename else ""
     if local_img_path and os.path.exists(local_img_path):
-        st.image(local_img_path, width="stretch")
+        st.image(local_img_path, use_container_width=True)
         return
     elif raw_path and os.path.exists(raw_path):
-        st.image(raw_path, width="stretch")
+        st.image(raw_path, use_container_width=True)
         return
 
-    # 2. Try fetching PDF page directly from Drive
+    # 2. Fast Cached PDF rendering from Drive
     if "file_id" in meta_dict and meta_dict["file_id"]:
-        pdf_bytes = fetch_pdf_bytes_from_drive(meta_dict["file_id"])
+        pdf_bytes = fetch_pdf_bytes_cached(meta_dict["file_id"])
         if pdf_bytes:
             try:
                 page_num = meta_dict.get("page", 1) - 1
                 doc = fitz.open(stream=pdf_bytes, filetype="pdf")
                 page = doc[page_num]
-                pix = page.get_pixmap(dpi=140)
-                st.image(pix.tobytes("jpg"), width="stretch")
+                pix = page.get_pixmap(dpi=110)
+                st.image(pix.tobytes("jpg"), use_container_width=True)
                 return
             except Exception:
                 pass
@@ -258,9 +265,11 @@ with tab1:
             raw_pil_img = Image.open(io.BytesIO(search_file.getvalue())).convert("RGB")
             
             st.markdown("<p style='font-weight:600; color:#334155; font-size:0.88rem; margin-top:16px;'>Crop Target Texture or Pattern Area:</p>", unsafe_allow_html=True)
+            
+            # Set realtime_update=False to eliminate cropper jitter/lag
             cropped_img = st_cropper(
                 raw_pil_img, 
-                realtime_update=True, 
+                realtime_update=False, 
                 box_color='#b8976c', 
                 aspect_ratio=None
             )
