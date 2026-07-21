@@ -1,8 +1,7 @@
 streamlit
 PyMuPDF
-Pillow
+pillow
 streamlit-cropper
-faiss-cpu
 torch
 torchvision
 requests
