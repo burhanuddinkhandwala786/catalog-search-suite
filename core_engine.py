@@ -3,11 +3,28 @@ import torchvision.transforms as T
 from PIL import Image
 import numpy as np
 import os
-import streamlit as st
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct
 
 COLLECTION_NAME = "catalog_embeddings"
+
+def get_secret(key_name):
+    """Safely retrieves secrets without throwing StreamlitSecretNotFoundError."""
+    # 1. Check environment variables (GitHub Actions / Local Terminal / Render)
+    val = os.environ.get(key_name)
+    if val:
+        return val
+
+    # 2. Check Streamlit secrets safely without throwing an exception
+    try:
+        import streamlit as st
+        if hasattr(st, "secrets") and key_name in st.secrets:
+            return st.secrets[key_name]
+    except Exception:
+        pass
+
+    return None
+
 
 class AIVectorEngine:
     def __init__(self):
@@ -22,12 +39,12 @@ class AIVectorEngine:
             T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ])
 
-        # Connect to Qdrant Cloud using environment variables or Streamlit secrets
-        qdrant_url = os.environ.get("QDRANT_URL") or st.secrets.get("QDRANT_URL")
-        qdrant_api_key = os.environ.get("QDRANT_API_KEY") or st.secrets.get("QDRANT_API_KEY")
+        # Safely fetch Qdrant credentials
+        qdrant_url = get_secret("QDRANT_URL")
+        qdrant_api_key = get_secret("QDRANT_API_KEY")
 
         if not qdrant_url or not qdrant_api_key:
-            raise ValueError("Missing QDRANT_URL or QDRANT_API_KEY configuration.")
+            raise ValueError("Missing QDRANT_URL or QDRANT_API_KEY. Please verify secrets are configured.")
 
         self.client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key)
         self._ensure_collection()
@@ -60,14 +77,12 @@ class AIVectorEngine:
         return all_embs
 
     def upsert_points(self, points: list):
-        """Uploads vector embeddings and metadata payloads directly to Qdrant Cloud."""
         self.client.upsert(
             collection_name=COLLECTION_NAME,
             points=points
         )
 
     def search(self, query_vector: list, top_k: int = 15, min_confidence: float = 0.10) -> list:
-        """Executes high-speed cosine vector search in Qdrant Cloud."""
         results = self.client.search(
             collection_name=COLLECTION_NAME,
             query_vector=query_vector,
@@ -84,8 +99,6 @@ class AIVectorEngine:
         return matches
 
     def get_all_brands(self) -> list:
-        """Extracts unique brand lists stored across Qdrant payloads."""
-        # Scroll through payloads to fetch unique company tags
         scroll_res, _ = self.client.scroll(collection_name=COLLECTION_NAME, limit=10000, with_payload=True, with_vectors=False)
         companies = set(point.payload.get("company", "General") for point in scroll_res if point.payload)
         return sorted(list(companies))
