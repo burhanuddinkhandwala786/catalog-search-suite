@@ -4,7 +4,7 @@ from PIL import Image
 import numpy as np
 import os
 from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, VectorParams, PointStruct
+from qdrant_client.models import Distance, VectorParams, PointStruct, Filter, FieldCondition, MatchValue, MatchText
 
 COLLECTION_NAME = "catalog_embeddings"
 
@@ -38,7 +38,6 @@ def pad_to_square(pil_img: Image.Image, bg_color=(255, 255, 255)) -> Image.Image
 
 class AIVectorEngine:
     def __init__(self):
-        # DINOv2 neural feature extractor (captures texture, pattern, shape, color, and design)
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.model = torch.hub.load("facebookresearch/dinov2", "dinov2_vits14").to(self.device)
         self.model.eval()
@@ -92,50 +91,66 @@ class AIVectorEngine:
             points=points
         )
 
-    def search(self, query_vector: list, top_k: int = 25, min_confidence: float = 0.40) -> list:
-        """Executes vector similarity search safely across all qdrant-client versions."""
+    def search(self, query_vector: list, top_k: int = 25, min_confidence: float = 0.40, brand_filter: str = None, keyword_filter: str = None) -> list:
+        """Native Hybrid Search combining Visual Vector Distance + Qdrant Payload Filter."""
         matches = []
         points = []
 
-        # 1. Primary Modern API (qdrant-client >= 1.10)
+        # Construct native Qdrant Payload Filter
+        must_conditions = []
+        if brand_filter and brand_filter != "All Brand Libraries":
+            must_conditions.append(FieldCondition(key="company", match=MatchValue(value=brand_filter)))
+        if keyword_filter and keyword_filter.strip():
+            must_conditions.append(FieldCondition(key="catalog", match=MatchText(text=keyword_filter.strip())))
+
+        query_filter = Filter(must=must_conditions) if must_conditions else None
+
+        # Execute Query
         if hasattr(self.client, "query_points"):
             try:
                 response = self.client.query_points(
                     collection_name=COLLECTION_NAME,
                     query=query_vector,
+                    query_filter=query_filter,
                     limit=top_k,
                     score_threshold=min_confidence
                 )
                 points = response.points
             except Exception:
                 try:
-                    # Fallback if score_threshold syntax differs in specific sub-versions
                     response = self.client.query_points(
                         collection_name=COLLECTION_NAME,
                         query=query_vector,
+                        query_filter=query_filter,
                         limit=top_k
                     )
                     points = [p for p in response.points if getattr(p, "score", 0) >= min_confidence]
                 except Exception:
                     points = []
 
-        # 2. Legacy API Fallback (qdrant-client < 1.10)
         if not points and hasattr(self.client, "search"):
             try:
                 points = self.client.search(
                     collection_name=COLLECTION_NAME,
                     query_vector=query_vector,
+                    query_filter=query_filter,
                     limit=top_k,
                     score_threshold=min_confidence
                 )
             except Exception:
                 points = []
 
-        # 3. Deduplicate page matches
+        # Deduplicate & exclude Cover Pages (Page 1)
         seen_pages = set()
         for res in points:
             payload = getattr(res, "payload", {}) or {}
-            page_key = f"{payload.get('catalog')}_p{payload.get('page')}"
+            page_num = payload.get("page", 1)
+            
+            # Skip Cover Pages
+            if page_num == 1:
+                continue
+
+            page_key = f"{payload.get('catalog')}_p{page_num}"
             if page_key not in seen_pages:
                 seen_pages.add(page_key)
                 matches.append({
