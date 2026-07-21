@@ -374,20 +374,23 @@ with tab2:
 
     st.divider()
 
-    # 3. GOOGLE DRIVE AUTO-SYNC TRIGGER WITH PROGRESS STATUS
+    # 3. GOOGLE DRIVE AUTO-SYNC TRIGGER VIA GITHUB ACTIONS DISPATCH
     st.markdown("##### 🔄 Sync Google Drive Catalogs")
     if st.button("🚀 Trigger Cloud PDF Indexing", type="primary", use_container_width=True):
-        progress_bar = st.progress(0, text="Connecting to Google Drive...")
-        
-        with st.spinner("Processing new PDF catalogs into Qdrant Cloud..."):
-            progress_bar.progress(30, text="Downloading new PDFs from Google Drive...")
-            
-            if run_auto_sync():
-                progress_bar.progress(80, text="Updating neural vector embeddings...")
-                st.cache_resource.clear()
-                progress_bar.progress(100, text="Indexing complete!")
-                st.success("✅ Database synchronized successfully! All new PDFs are live.")
-                st.rerun()
-            else:
-                progress_bar.empty()
-                st.error("❌ Sync failed. Please check Google Drive file permissions or GitHub Actions log.")
+        gh_token = st.secrets.get("GITHUB_TOKEN")
+        if not gh_token:
+            st.error("❌ Missing `GITHUB_TOKEN` in Streamlit secrets. Please add it to enable cloud sync dispatch.")
+        else:
+            with st.spinner("Triggering GitHub Actions cloud indexing server..."):
+                url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/dispatches"
+                headers = {
+                    "Authorization": f"Bearer {gh_token}",
+                    "Accept": "application/vnd.github.v3+json",
+                    "User-Agent": "Streamlit-Catalog-App"
+                }
+                res = requests.post(url, json={"event_type": "drive-updated"}, headers=headers)
+                
+                if res.status_code == 204:
+                    st.success("✅ Sync successfully triggered on GitHub Actions! Your catalogs will update in the background within 1–2 minutes.")
+                else:
+                    st.error(f"❌ Failed to trigger GitHub workflow. Status code: {res.status_code}")
