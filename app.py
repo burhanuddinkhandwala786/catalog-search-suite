@@ -22,7 +22,6 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# --- SESSION STATE HELPER ---
 def st_session_state_wrapper():
     return st.session_state
 
@@ -153,7 +152,6 @@ def render_match_image(meta_dict):
     raw_path = meta_dict.get("page_path", "")
     filename = os.path.basename(raw_path) if raw_path else ""
 
-    # 1. Check local disk
     local_img_path = os.path.join("catalog_pages", filename) if filename else ""
     if local_img_path and os.path.exists(local_img_path):
         st.image(local_img_path, use_container_width=True)
@@ -162,7 +160,6 @@ def render_match_image(meta_dict):
         st.image(raw_path, use_container_width=True)
         return
 
-    # 2. Fetch from Google Drive & render via native PIL Image
     if "file_id" in meta_dict and meta_dict["file_id"]:
         pdf_bytes = fetch_pdf_bytes_cached(meta_dict["file_id"])
         if pdf_bytes:
@@ -171,13 +168,13 @@ def render_match_image(meta_dict):
                 doc = fitz.open(stream=pdf_bytes, filetype="pdf")
                 page = doc[page_num]
                 
-                # Render pixmap directly into native PIL Image (100% reliable)
+                # Render directly to PIL Image for 100% web container reliability
                 pix = page.get_pixmap(dpi=110)
                 img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
                 
                 st.image(img, use_container_width=True)
                 return
-            except Exception as e:
+            except Exception:
                 pass
 
     st.info(f"📍 **Match Reference:** {meta_dict.get('catalog', '')} — **Page {meta_dict.get('page', 1)}**")
@@ -216,7 +213,7 @@ with tab1:
         with col_filter:
             selected_company = st.selectbox("Select Brand Collection:", companies)
         with col_search_kw:
-            catalog_keyword = st.text_input("Filter Catalog Name (Optional):", placeholder="e.g. Acroglass, Hardware")
+            catalog_keyword = st.text_input("Filter Catalog Name (Optional):", placeholder="e.g. Marbelo, Louvers")
         with col_sync:
             if st.button("🔄 Sync Drive", use_container_width=True):
                 gh_token = st.secrets.get("GITHUB_TOKEN")
@@ -252,7 +249,6 @@ with tab1:
             
             st.markdown("<p style='font-weight:600; color:#334155; font-size:0.88rem; margin-top:16px;'>1. Adjust Crop Area over Pattern / Product:</p>", unsafe_allow_html=True)
             
-            # Use realtime_update=True so the cropper canvas tracks handle moves accurately
             cropped_img = st_cropper(
                 raw_pil_img, 
                 realtime_update=True, 
@@ -261,12 +257,13 @@ with tab1:
                 return_type='image'
             )
             
-            # 2. EXPLICIT BUTTON: Guarantees Streamlit captures the exact updated crop!
             st.markdown("<br>", unsafe_allow_html=True)
             trigger_search = st.button("🔍 Search Cropped Pattern", type="primary", use_container_width=True)
             
-            if trigger_search or "last_cropped" not in st_session_state_wrapper():
-                # High-Quality Upsampling for tiny crops (Preserves shape/texture detail)
+            if trigger_search or "last_search_executed" in st_session_state_wrapper():
+                st_session_state_wrapper()["last_search_executed"] = True
+                
+                # Upsample small crops for high-precision shape & texture detail
                 if cropped_img.width < 224 or cropped_img.height < 224:
                     proc_img = cropped_img.resize((448, 448), Image.Resampling.BICUBIC)
                 else:
@@ -275,24 +272,18 @@ with tab1:
                 with st.spinner("Searching neural database for visual matches..."):
                     query_vector = engine.get_single_embedding(proc_img)
                     confidence_threshold = min_confidence_slider / 100.0
-                    raw_matches = engine.search(query_vector, top_k=25, min_confidence=confidence_threshold)
                     
-                    filtered_matches = []
-                    for m in raw_matches:
-                        meta = m.get("meta", {})
-                        
-                        # EXCLUDE COVER PAGES (Page 1)
-                        if meta.get("page", 1) == 1:
-                            continue
-                            
-                        company_match = (selected_company == "All Brand Libraries" or meta.get("company", "General") == selected_company)
-                        catalog_match = (not catalog_keyword or catalog_keyword.lower() in meta.get("catalog", "").lower())
-                        
-                        if company_match and catalog_match:
-                            filtered_matches.append(m)
+                    # Native Hybrid Search (Vector + Qdrant Payload Filter)
+                    matches = engine.search(
+                        query_vector=query_vector, 
+                        top_k=25, 
+                        min_confidence=confidence_threshold,
+                        brand_filter=selected_company,
+                        keyword_filter=catalog_keyword
+                    )
                     
-                    exact_matches = [m for m in filtered_matches if m["score"] >= 0.50]
-                    high_confidence_matches = [m for m in filtered_matches if confidence_threshold <= m["score"] < 0.50]
+                    exact_matches = [m for m in matches if m["score"] >= 0.50]
+                    high_confidence_matches = [m for m in matches if confidence_threshold <= m["score"] < 0.50]
                 
                 st.markdown("<br>", unsafe_allow_html=True)
                 
