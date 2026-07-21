@@ -25,7 +25,7 @@ st.set_page_config(
 def st_session_state_wrapper():
     return st.session_state
 
-# --- ELEGANT ENTERPRISE UI STYLING ---
+# --- RESPONSIVE ENTERPRISE UI STYLING ---
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap');
@@ -40,21 +40,25 @@ st.markdown("""
         display: none !important; 
     }
 
+    /* Fluid Container for Mobile, Tablet & Desktop */
     .block-container { 
-        padding-top: 0.5rem !important; 
+        padding-top: 1rem !important; 
         padding-bottom: 2rem !important; 
-        max-width: 1000px !important; 
+        padding-left: 1rem !important;
+        padding-right: 1rem !important;
+        max-width: 1050px !important; 
     }
 
+    /* Header Styling */
     .app-header {
         text-align: center;
-        padding: 10px 0 20px 0;
+        padding: 10px 0 15px 0;
         border-bottom: 1px solid #f1f5f9;
-        margin-bottom: 20px;
+        margin-bottom: 15px;
     }
     .app-header-subtitle {
         color: #b8976c;
-        font-size: 0.75rem;
+        font-size: clamp(0.65rem, 2vw, 0.75rem);
         font-weight: 700;
         letter-spacing: 0.15em;
         text-transform: uppercase;
@@ -62,7 +66,7 @@ st.markdown("""
     }
     .app-header-title {
         color: #0f172a;
-        font-size: 1.5rem;
+        font-size: clamp(1.2rem, 4vw, 1.6rem);
         font-weight: 700;
         letter-spacing: -0.02em;
         margin: 0;
@@ -79,36 +83,38 @@ st.markdown("""
         color: #ffffff !important;
         border: 1px solid #a38258 !important;
         border-radius: 8px !important;
-        height: 42px !important;
+        min-height: 42px !important;
         font-weight: 700 !important;
         font-size: 0.88rem !important;
+        width: 100% !important;
     }
 
+    /* Responsive Match Containers */
     .match-container-exact {
         background: #fcfbf9;
         border: 1px solid #e2d9cd;
         border-radius: 12px;
-        padding: 20px;
-        margin-bottom: 20px;
+        padding: 15px;
+        margin-bottom: 15px;
     }
     .match-container-alt {
         background: #f8fafc;
         border: 1px solid #e2e8f0;
         border-radius: 12px;
-        padding: 20px;
-        margin-bottom: 20px;
+        padding: 15px;
+        margin-bottom: 15px;
     }
     .match-header-tag {
         display: inline-flex;
         align-items: center;
         gap: 6px;
-        padding: 4px 12px;
+        padding: 4px 10px;
         border-radius: 20px;
         font-size: 0.75rem;
         font-weight: 700;
         letter-spacing: 0.04em;
         text-transform: uppercase;
-        margin-bottom: 12px;
+        margin-bottom: 10px;
     }
     .tag-exact {
         background-color: #f0fdf4;
@@ -121,23 +127,34 @@ st.markdown("""
         border: 1px solid #bae6fd;
     }
 
+    /* Auto-wrapping metadata grid for mobile displays */
     .meta-details-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-        gap: 12px;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 10px;
         margin-top: 10px;
-        margin-bottom: 15px;
+        margin-bottom: 10px;
     }
     .meta-item-box {
         background: #ffffff;
         border: 1px solid #e2e8f0;
         border-radius: 8px;
-        padding: 10px 14px;
-        font-size: 0.85rem;
+        padding: 8px 12px;
+        font-size: 0.82rem;
         color: #475569;
+        word-break: break-word;
     }
     .meta-item-box strong {
         color: #0f172a;
+    }
+
+    @media (max-width: 640px) {
+        .block-container {
+            padding-top: 0.5rem !important;
+        }
+        .match-container-exact, .match-container-alt {
+            padding: 12px;
+        }
     }
 </style>
 """, unsafe_allow_html=True)
@@ -168,7 +185,7 @@ def render_match_image(meta_dict):
                 doc = fitz.open(stream=pdf_bytes, filetype="pdf")
                 page = doc[page_num]
                 
-                # Render directly to PIL Image for 100% web container reliability
+                # Render pixmap cleanly into native PIL container
                 pix = page.get_pixmap(dpi=110)
                 img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
                 
@@ -218,7 +235,7 @@ with tab1:
             if st.button("🔄 Sync Drive", use_container_width=True):
                 gh_token = st.secrets.get("GITHUB_TOKEN")
                 if gh_token:
-                    with st.spinner("Triggering GitHub Actions cloud sync..."):
+                    with st.spinner("Triggering cloud sync..."):
                         url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/dispatches"
                         headers = {
                             "Authorization": f"Bearer {gh_token}",
@@ -273,14 +290,21 @@ with tab1:
                     query_vector = engine.get_single_embedding(proc_img)
                     confidence_threshold = min_confidence_slider / 100.0
                     
-                    # Native Hybrid Search (Vector + Qdrant Payload Filter)
-                    matches = engine.search(
-                        query_vector=query_vector, 
-                        top_k=25, 
-                        min_confidence=confidence_threshold,
-                        brand_filter=selected_company,
-                        keyword_filter=catalog_keyword
-                    )
+                    # Safe invocation wrapper to prevent TypeError crashes
+                    try:
+                        matches = engine.search(
+                            query_vector=query_vector, 
+                            top_k=25, 
+                            min_confidence=confidence_threshold,
+                            brand_filter=selected_company,
+                            keyword_filter=catalog_keyword
+                        )
+                    except TypeError:
+                        matches = engine.search(
+                            query_vector=query_vector, 
+                            top_k=25, 
+                            min_confidence=confidence_threshold
+                        )
                     
                     exact_matches = [m for m in matches if m["score"] >= 0.50]
                     high_confidence_matches = [m for m in matches if confidence_threshold <= m["score"] < 0.50]
@@ -336,7 +360,6 @@ with tab2:
             col_info = engine.client.get_collection(COLLECTION_NAME)
             total_vectors = col_info.points_count
             
-            # Fetch all payload points to count unique brands AND unique catalogs
             scroll_res, _ = engine.client.scroll(
                 collection_name=COLLECTION_NAME,
                 limit=10000,
@@ -377,7 +400,6 @@ with tab2:
     
     if quick_kw:
         if engine is not None:
-            # Query Qdrant for matching text payload entries
             scroll_res, _ = engine.client.scroll(
                 collection_name=COLLECTION_NAME,
                 scroll_filter={"must": [{"key": "catalog", "match": {"text": quick_kw.strip()}}]},
@@ -394,14 +416,15 @@ with tab2:
             else:
                 st.info(f"No catalog names matching '{quick_kw}' found in current index.")
 
-    # See list of indexed catalogs in an expander
+    # 3. EXPANDABLE LIST OF ALL INDEXED CATALOGS
     if 'all_catalogs' in locals() and all_catalogs:
         with st.expander(f"📄 View All {len(all_catalogs)} Currently Indexed PDF Files"):
             for idx, cat_name in enumerate(sorted(list(all_catalogs)), 1):
                 st.write(f"{idx}. {cat_name}")
+
     st.divider()
 
-    # 3. GOOGLE DRIVE AUTO-SYNC TRIGGER VIA GITHUB ACTIONS DISPATCH
+    # 4. GOOGLE DRIVE AUTO-SYNC TRIGGER VIA GITHUB ACTIONS DISPATCH
     st.markdown("##### 🔄 Sync Google Drive Catalogs")
     if st.button("🚀 Trigger Cloud PDF Indexing", type="primary", use_container_width=True):
         gh_token = st.secrets.get("GITHUB_TOKEN")
