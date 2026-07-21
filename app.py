@@ -296,6 +296,12 @@ engine = load_engine()
 latest_sha = get_latest_github_commit()
 index, metadata = load_remote_index_via_api(latest_sha)
 
+# --- TEMPORARY DEBUG CHECK ---
+st.write(f"🔍 **Debug Info:** Active SHA: `{latest_sha[:7]}` | Total Pages Loaded: `{len(metadata)}`")
+if metadata:
+    loaded_catalogs = set(m.get("catalog", "") for m in metadata)
+    st.write(f"📖 **Loaded Catalogs in Memory:** {list(loaded_catalogs)}")
+
 if index is not None and len(metadata) > 0:
     engine.index = index
     engine.metadata = metadata
