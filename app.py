@@ -17,6 +17,8 @@ warnings.filterwarnings("ignore")
 # Prevent CPU bottlenecking on shared cloud hardware
 torch.set_num_threads(4)
 
+RAW_GITHUB_BASE = "https://raw.githubusercontent.com/burhanuddinkhandwala786/catalog-search-suite/main"
+
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
     page_title="Visual Catalog Matcher",
@@ -200,13 +202,13 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-# Dynamic Cloud Image Renderer
+# Dynamic Cloud Image Renderer with GitHub Fallback
 def render_match_image(meta_dict):
     raw_path = meta_dict.get("page_path", "")
     filename = os.path.basename(raw_path) if raw_path else ""
     local_img_path = os.path.join("catalog_pages", filename) if filename else ""
     
-    # Check if pre-extracted image exists on cloud disk
+    # 1. Check local container disk
     if local_img_path and os.path.exists(local_img_path):
         st.image(local_img_path, use_container_width=True)
         return
@@ -214,7 +216,18 @@ def render_match_image(meta_dict):
         st.image(raw_path, use_container_width=True)
         return
 
-    # Dynamic extraction from PDF
+    # 2. Fetch directly from GitHub raw storage if image isn't on local container disk yet
+    if filename:
+        github_img_url = f"{RAW_GITHUB_BASE}/catalog_pages/{filename}"
+        try:
+            res = requests.get(github_img_url, timeout=10)
+            if res.status_code == 200:
+                st.image(res.content, use_container_width=True)
+                return
+        except Exception:
+            pass
+
+    # 3. Dynamic extraction from local PDF if available
     pdf_catalog = meta_dict.get("catalog", "")
     page_num = meta_dict.get("page", 1) - 1
     
@@ -233,7 +246,6 @@ def render_match_image(meta_dict):
             except Exception:
                 pass
 
-    # Fetch PDF from Drive if file_id is present
     if doc is None and "file_id" in meta_dict and meta_dict["file_id"]:
         pdf_bytes = fetch_pdf_bytes_from_drive(meta_dict["file_id"])
         if pdf_bytes:
@@ -254,34 +266,60 @@ def render_match_image(meta_dict):
     st.info(f"📍 **Match Reference:** {pdf_catalog} — **Page {page_num + 1}**")
 
 
+# Fetch latest commit SHA to detect GitHub updates automatically
+def get_latest_github_commit():
+    try:
+        url = "https://api.github.com/repos/burhanuddinkhandwala786/catalog-search-suite/commits/main"
+        res = requests.get(url, timeout=5)
+        if res.status_code == 200:
+            return res.json().get("sha", "")
+    except Exception:
+        pass
+    return "default_sha"
+
+
 # Engine Initialization
 @st.cache_resource(show_spinner="Loading Visual Recognition Engine...")
 def load_engine():
     return AIVectorEngine()
 
 
-# RAM Caching tied to index file modification timestamp
-@st.cache_resource(show_spinner=False)
-def load_cached_index(file_mtime):
-    index_file = "faiss_catalog.index"
-    meta_file = "catalog_meta.pkl"
-    if os.path.exists(index_file) and os.path.exists(meta_file):
+# Remote index loader tied to the latest GitHub Commit SHA
+@st.cache_resource(show_spinner="Syncing database with GitHub...")
+def load_remote_index(commit_sha):
+    index_url = f"{RAW_GITHUB_BASE}/faiss_catalog.index"
+    meta_url = f"{RAW_GITHUB_BASE}/catalog_meta.pkl"
+    
+    try:
+        idx_res = requests.get(index_url, timeout=30)
+        meta_res = requests.get(meta_url, timeout=30)
+        
+        if idx_res.status_code == 200 and meta_res.status_code == 200:
+            with open("faiss_catalog.index", "wb") as f:
+                f.write(idx_res.content)
+            
+            meta = pickle.loads(meta_res.content)
+            idx = faiss.read_index("faiss_catalog.index")
+            return idx, meta
+    except Exception:
+        pass
+    
+    # Fallback to local files if offline
+    if os.path.exists("faiss_catalog.index") and os.path.exists("catalog_meta.pkl"):
         try:
-            idx = faiss.read_index(index_file)
-            with open(meta_file, "rb") as f:
+            idx = faiss.read_index("faiss_catalog.index")
+            with open("catalog_meta.pkl", "rb") as f:
                 meta = pickle.load(f)
             return idx, meta
         except Exception:
-            return None, []
+            pass
+            
     return None, []
 
 
-# Dynamically track file modified time so cache automatically updates when files change
-index_file_path = "faiss_catalog.index"
-current_mtime = os.path.getmtime(index_file_path) if os.path.exists(index_file_path) else 0
-
 engine = load_engine()
-index, metadata = load_cached_index(current_mtime)
+latest_sha = get_latest_github_commit()
+index, metadata = load_remote_index(latest_sha)
 
 if index is not None and len(metadata) > 0:
     engine.index = index
@@ -309,7 +347,6 @@ with tab1:
         companies = sorted(list(set(m.get("company", "General") for m in engine.metadata)))
         companies.insert(0, "All Brand Libraries")
         
-        # Clean vertical alignment using bottom-aligned column spec
         col_filter, col_sync = st.columns([3.5, 1], vertical_alignment="bottom")
         with col_filter:
             selected_company = st.selectbox("Select Brand Collection:", companies)
@@ -330,9 +367,8 @@ with tab1:
                         res = requests.post(url, json=data, headers=headers)
                         
                         if res.status_code == 204:
-                            # Force clear RAM cache so new FAISS index loads
                             st.cache_resource.clear()
-                            st.success("Sync triggered on GitHub! New catalogs will appear in ~1–2 minutes.")
+                            st.success("Sync triggered! New catalogs will load in ~1–2 minutes.")
                         else:
                             st.error(f"Failed to trigger sync: {res.status_code}")
                 else:
