@@ -65,14 +65,12 @@ st.markdown("""
         margin: 0;
     }
 
-    /* DROPDOWN & INPUT STYLING */
     div[data-baseweb="select"], input {
         border-radius: 8px !important;
         border: 1.5px solid #cbd5e1 !important;
         background-color: #f8fafc !important;
     }
 
-    /* BUTTON STYLING */
     .stButton>button {
         background-color: #b8976c !important;
         color: #ffffff !important;
@@ -83,7 +81,6 @@ st.markdown("""
         font-size: 0.88rem !important;
     }
 
-    /* MATCH CARDS & TAGS */
     .match-container-exact {
         background: #fcfbf9;
         border: 1px solid #e2d9cd;
@@ -143,13 +140,11 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-# --- CACHED DRIVE DOWNLOADER ---
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_pdf_bytes_cached(file_id):
     return fetch_pdf_bytes_from_drive(file_id)
 
 
-# Render match image safely
 def render_match_image(meta_dict):
     raw_path = meta_dict.get("page_path", "")
     filename = os.path.basename(raw_path) if raw_path else ""
@@ -178,7 +173,6 @@ def render_match_image(meta_dict):
     st.info(f"📍 **Match Reference:** {meta_dict.get('catalog', '')} — **Page {meta_dict.get('page', 1)}**")
 
 
-# Engine Initialization
 @st.cache_resource(show_spinner="Connecting to Visual Search Engine...")
 def load_engine():
     try:
@@ -231,7 +225,6 @@ with tab1:
                         else:
                             st.error(f"Failed: {res.status_code}")
 
-        # Sensitivity Controls
         with st.expander("⚙️ Search Sensitivity Controls", expanded=False):
             min_confidence_slider = st.slider(
                 "Minimum Confidence Cutoff (%)",
@@ -260,7 +253,6 @@ with tab1:
                 confidence_threshold = min_confidence_slider / 100.0
                 raw_matches = engine.search(query_vector, top_k=25, min_confidence=confidence_threshold)
                 
-                # Apply brand and catalog keyword filtering
                 filtered_matches = []
                 for m in raw_matches:
                     meta = m.get("meta", {})
