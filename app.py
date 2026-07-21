@@ -153,6 +153,7 @@ def render_match_image(meta_dict):
     raw_path = meta_dict.get("page_path", "")
     filename = os.path.basename(raw_path) if raw_path else ""
 
+    # 1. Check local disk
     local_img_path = os.path.join("catalog_pages", filename) if filename else ""
     if local_img_path and os.path.exists(local_img_path):
         st.image(local_img_path, use_container_width=True)
@@ -161,6 +162,7 @@ def render_match_image(meta_dict):
         st.image(raw_path, use_container_width=True)
         return
 
+    # 2. Fetch from Google Drive & render via native PIL Image
     if "file_id" in meta_dict and meta_dict["file_id"]:
         pdf_bytes = fetch_pdf_bytes_cached(meta_dict["file_id"])
         if pdf_bytes:
@@ -168,10 +170,14 @@ def render_match_image(meta_dict):
                 page_num = meta_dict.get("page", 1) - 1
                 doc = fitz.open(stream=pdf_bytes, filetype="pdf")
                 page = doc[page_num]
+                
+                # Render pixmap directly into native PIL Image (100% reliable)
                 pix = page.get_pixmap(dpi=110)
-                st.image(pix.tobytes("jpg"), use_container_width=True)
+                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                
+                st.image(img, use_container_width=True)
                 return
-            except Exception:
+            except Exception as e:
                 pass
 
     st.info(f"📍 **Match Reference:** {meta_dict.get('catalog', '')} — **Page {meta_dict.get('page', 1)}**")
