@@ -82,17 +82,76 @@ def fetch_all_pdfs(service):
     return all_files
 
 
-def download_unindexed_pdfs(service, indexed_catalogs):
+def cleanup_deleted_catalogs(drive_files, existing_meta, engine):
+    """Removes local images and metadata for PDFs deleted from Google Drive."""
+    active_pdf_names = set(f["name"] for f in drive_files) | set(f["name"].replace(" ", "_") for f in drive_files)
+    
+    updated_meta = []
+    deleted_catalogs = set()
+
+    for m in existing_meta:
+        catalog_name = m.get("catalog", "")
+        safe_catalog_name = catalog_name.replace(" ", "_")
+
+        if catalog_name in active_pdf_names or safe_catalog_name in active_pdf_names:
+            updated_meta.append(m)
+        else:
+            deleted_catalogs.add(catalog_name)
+            # Delete corresponding extracted image from catalog_pages/
+            img_path = m.get("page_path", "")
+            if img_path and os.path.exists(img_path):
+                try:
+                    os.remove(img_path)
+                except Exception as e:
+                    print(f"⚠️ Could not delete image '{img_path}': {e}")
+
+    if deleted_catalogs:
+        print(f"🗑️ Detected {len(deleted_catalogs)} deleted PDF(s) from Drive: {list(deleted_catalogs)}")
+        print("🔄 Rebuilding FAISS index for active catalogs to stay under storage limits...")
+        
+        # Re-embed remaining active images to ensure clean vector index alignment
+        if updated_meta:
+            images = []
+            valid_meta = []
+            for m in updated_meta:
+                p_path = m.get("page_path", "")
+                if os.path.exists(p_path):
+                    try:
+                        images.append(Image.open(p_path).convert("RGB"))
+                        valid_meta.append(m)
+                    except Exception:
+                        pass
+
+            if images:
+                new_embeddings = engine.get_batch_embeddings(images, batch_size=16)
+                engine.create_index(new_embeddings, valid_meta)
+                faiss.write_index(engine.index, INDEX_FILE)
+                with open(META_FILE, "wb") as f:
+                    pickle.dump(valid_meta, f)
+                print(f"✅ Clean index rebuilt with {len(valid_meta)} active pages.")
+                return valid_meta, True
+        else:
+            # If all PDFs were deleted from Drive
+            if os.path.exists(INDEX_FILE):
+                os.remove(INDEX_FILE)
+            if os.path.exists(META_FILE):
+                os.remove(META_FILE)
+            print("🧹 All catalogs deleted from Drive. Cleared index completely.")
+            return [], True
+
+    return existing_meta, False
+
+
+def download_unindexed_pdfs(service, drive_files, indexed_catalogs):
     """Only downloads PDFs that are NOT already in the index."""
     ensure_directories()
-    files = fetch_all_pdfs(service)
 
-    if not files:
+    if not drive_files:
         print("⚠️ 0 PDF files returned by Drive API.")
         return []
 
     new_files = []
-    for f in files:
+    for f in drive_files:
         safe_filename = f["name"].replace(" ", "_")
         
         # Check if catalog is already processed
@@ -119,7 +178,6 @@ def download_unindexed_pdfs(service, indexed_catalogs):
 def extract_and_index_incremental():
     ensure_directories()
     
-    # Load existing metadata & FAISS index if present
     existing_meta = []
     existing_catalogs = set()
     index = None
@@ -139,12 +197,20 @@ def extract_and_index_incremental():
         except Exception as e:
             print(f"⚠️ Failed to load existing index: {e}")
 
-    # Connect to Drive and download ONLY new PDFs
+    # Connect to Drive
     service = get_drive_service()
     if not service:
         raise RuntimeError("Drive Service authentication failed.")
 
-    new_pdf_names = download_unindexed_pdfs(service, existing_catalogs)
+    engine = AIVectorEngine()
+    drive_files = fetch_all_pdfs(service)
+
+    # Clean up any PDFs deleted from Drive before processing new ones
+    existing_meta, cleaned_up = cleanup_deleted_catalogs(drive_files, existing_meta, engine)
+    existing_catalogs = set(m.get("catalog", "") for m in existing_meta)
+
+    # Download new PDFs
+    new_pdf_names = download_unindexed_pdfs(service, drive_files, existing_catalogs)
 
     # Check for any local unindexed PDFs sitting in pdf_catalogs/
     local_pdfs = [f for f in os.listdir(PDF_DIR) if f.lower().endswith(".pdf")]
@@ -153,12 +219,11 @@ def extract_and_index_incremental():
     all_new_pdfs = list(set(new_pdf_names + unindexed_local_pdfs))
 
     if not all_new_pdfs:
-        print("✅ No new PDF catalogs detected! All files are already indexed. Exiting fast.")
+        print("✅ No new PDF catalogs detected! All files are up to date.")
         return True
 
     print(f"🚀 Processing {len(all_new_pdfs)} NEW catalog PDF file(s)...")
 
-    engine = AIVectorEngine()
     pages_to_embed = []
     new_metadata = []
 
@@ -197,8 +262,8 @@ def extract_and_index_incremental():
         print(f"⚡ Generating embeddings ONLY for {len(pages_to_embed)} new page(s)...")
         new_embeddings = engine.get_batch_embeddings(pages_to_embed, batch_size=16)
 
-        if index is not None:
-            print("➕ Appending new vectors into existing FAISS index...")
+        if os.path.exists(INDEX_FILE):
+            index = faiss.read_index(INDEX_FILE)
             index.add(new_embeddings)
             final_index = index
         else:
@@ -212,7 +277,6 @@ def extract_and_index_incremental():
             pickle.dump(combined_metadata, f)
 
         print(f"✅ Incremental indexing complete! Added {len(pages_to_embed)} pages. Total pages in index: {len(combined_metadata)}.")
-        return True
 
     return True
 
