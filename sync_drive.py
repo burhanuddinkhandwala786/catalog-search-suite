@@ -32,7 +32,6 @@ def extract_brand_name(pdf_filename):
 
 
 def fetch_pdf_bytes_from_drive(file_id):
-    """Fallback helper used by frontend to stream missing page images."""
     url = f"https://drive.google.com/uc?export=download&id={file_id}"
     try:
         res = requests.get(url, timeout=15)
@@ -83,28 +82,26 @@ def fetch_all_pdfs(service):
     return all_files
 
 
-def get_indexed_catalogs_from_qdrant(engine):
-    """Safely retrieves all indexed catalog names using cursor-based pagination."""
-    indexed_catalogs = set()
-    next_page_offset = None
+def extract_page_tiles(pil_img):
+    """
+    Generates sub-crop tiles (swatches) from a catalog page so textures/products
+    are indexed individually alongside full-page views.
+    """
+    w, h = pil_img.size
+    tiles = [pil_img]  # Full page image
 
-    while True:
-        scroll_res, next_page_offset = engine.client.scroll(
-            collection_name=COLLECTION_NAME,
-            limit=250,
-            offset=next_page_offset,
-            with_payload=["catalog"],
-            with_vectors=False
-        )
+    # 2x2 Grid Crop (4 tiles)
+    half_w, half_h = w // 2, h // 2
+    tiles.append(pil_img.crop((0, 0, half_w, half_h)))            # Top-Left
+    tiles.append(pil_img.crop((half_w, 0, w, half_h)))           # Top-Right
+    tiles.append(pil_img.crop((0, half_h, half_w, h)))           # Bottom-Left
+    tiles.append(pil_img.crop((half_w, half_h, w, h)))          # Bottom-Right
 
-        for point in scroll_res:
-            if point.payload and "catalog" in point.payload:
-                indexed_catalogs.add(point.payload["catalog"])
+    # Center Tile Crop (where swatches usually sit)
+    margin_w, margin_h = w // 4, h // 4
+    tiles.append(pil_img.crop((margin_w, margin_h, w - margin_w, h - margin_h)))
 
-        if next_page_offset is None:
-            break
-
-    return indexed_catalogs
+    return tiles
 
 
 def extract_and_index_qdrant():
@@ -116,10 +113,15 @@ def extract_and_index_qdrant():
     engine = AIVectorEngine()
     drive_files = fetch_all_pdfs(service)
 
-    # Paginated retrieval of already indexed catalogs
-    indexed_catalogs = get_indexed_catalogs_from_qdrant(engine)
+    # Fetch already indexed catalog names from Qdrant
+    scroll_res, _ = engine.client.scroll(
+        collection_name=COLLECTION_NAME,
+        limit=10000,
+        with_payload=["catalog"],
+        with_vectors=False
+    )
+    indexed_catalogs = set(point.payload.get("catalog") for point in scroll_res if point.payload)
 
-    # Filter out already indexed files
     new_drive_files = [
         f for f in drive_files 
         if f["name"] not in indexed_catalogs and f["name"].replace(" ", "_") not in indexed_catalogs
@@ -129,7 +131,7 @@ def extract_and_index_qdrant():
         print("✅ All catalogs up to date in Qdrant Cloud!")
         return True
 
-    print(f"🚀 Processing {len(new_drive_files)} NEW catalog(s) for Qdrant Cloud...")
+    print(f"🚀 Processing {len(new_drive_files)} NEW catalog(s) with Multi-Tile Indexing...")
 
     for f in new_drive_files:
         pdf_filename = f["name"].replace(" ", "_")
@@ -148,60 +150,56 @@ def extract_and_index_qdrant():
             doc = fitz.open(local_pdf_path)
             print(f"📖 Processing '{pdf_filename}' -> Brand: [{brand}] ({len(doc)} pages)...")
 
-            # Process in memory-safe batches of 16 pages
-            BATCH_SIZE = 16
-            for start_idx in range(0, len(doc), BATCH_SIZE):
-                batch_doc = doc[start_idx : start_idx + BATCH_SIZE]
-                pil_images = []
-                payloads = []
+            points_to_upsert = []
 
-                for page_offset, page in enumerate(batch_doc):
-                    actual_page_num = start_idx + page_offset + 1
-                    pix = page.get_pixmap(dpi=130)
+            for page_num in range(len(doc)):
+                page = doc[page_num]
+                pix = page.get_pixmap(dpi=130)
 
-                    img_filename = f"{pdf_filename}_page_{actual_page_num}.jpg"
-                    rel_image_path = os.path.join(PAGE_DIR, img_filename)
-                    pix.save(rel_image_path)
+                img_filename = f"{pdf_filename}_page_{page_num + 1}.jpg"
+                rel_image_path = os.path.join(PAGE_DIR, img_filename)
+                pix.save(rel_image_path)
 
-                    img = Image.open(rel_image_path).convert("RGB")
-                    pil_images.append(img)
-                    payloads.append({
-                        "page_path": rel_image_path,
-                        "page": actual_page_num,
-                        "catalog": pdf_filename,
-                        "company": brand,
-                        "file_id": f["id"]
-                    })
+                full_page_img = Image.open(rel_image_path).convert("RGB")
+                
+                # Extract sub-tiles (swatches/regions) for precision matching
+                tiles = extract_page_tiles(full_page_img)
+                tile_embeddings = engine.get_batch_embeddings(tiles, batch_size=len(tiles))
 
-                if pil_images:
-                    embeddings = engine.get_batch_embeddings(pil_images, batch_size=BATCH_SIZE)
-                    points_to_upsert = [
+                for tile_idx, vector in enumerate(tile_embeddings):
+                    points_to_upsert.append(
                         PointStruct(
                             id=str(uuid.uuid4()),
                             vector=vector,
-                            payload=payload
+                            payload={
+                                "page_path": rel_image_path,
+                                "page": page_num + 1,
+                                "catalog": pdf_filename,
+                                "company": brand,
+                                "file_id": f["id"],
+                                "is_tile": tile_idx > 0
+                            }
                         )
-                        for vector, payload in zip(embeddings, payloads)
-                    ]
-                    engine.upsert_points(points_to_upsert)
+                    )
 
-                    # Explicitly close image pointers to prevent RAM bloat
-                    for img in pil_images:
-                        img.close()
+                full_page_img.close()
+
+            if points_to_upsert:
+                print(f"⚡ Uploading {len(points_to_upsert)} multi-tile vectors to Qdrant...")
+                engine.upsert_points(points_to_upsert)
 
             print(f"✅ Finished indexing '{pdf_filename}'!")
 
         except Exception as e:
             print(f"❌ Error extracting '{pdf_filename}': {e}")
         finally:
-            # Clean up raw local PDF after processing
             if os.path.exists(local_pdf_path):
                 try:
                     os.remove(local_pdf_path)
                 except Exception:
                     pass
 
-    print("✅ All new catalogs processed and pushed to Qdrant Cloud!")
+    print("✅ Multi-tile indexing complete!")
     return True
 
 
