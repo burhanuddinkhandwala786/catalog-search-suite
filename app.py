@@ -284,15 +284,23 @@ def load_engine():
     return AIVectorEngine()
 
 
-# Remote index loader tied to the latest GitHub Commit SHA
+# Remote index loader with cache-busting headers
 @st.cache_resource(show_spinner="Syncing database with GitHub...")
 def load_remote_index(commit_sha):
-    index_url = f"{RAW_GITHUB_BASE}/faiss_catalog.index"
-    meta_url = f"{RAW_GITHUB_BASE}/catalog_meta.pkl"
+    # Cache-busting URL query parameters using the latest commit SHA
+    index_url = f"{RAW_GITHUB_BASE}/faiss_catalog.index?v={commit_sha}"
+    meta_url = f"{RAW_GITHUB_BASE}/catalog_meta.pkl?v={commit_sha}"
+    
+    # Headers to bypass GitHub CDN edge caching
+    headers = {
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "Pragma": "no-cache",
+        "Expires": "0"
+    }
     
     try:
-        idx_res = requests.get(index_url, timeout=30)
-        meta_res = requests.get(meta_url, timeout=30)
+        idx_res = requests.get(index_url, headers=headers, timeout=30)
+        meta_res = requests.get(meta_url, headers=headers, timeout=30)
         
         if idx_res.status_code == 200 and meta_res.status_code == 200:
             with open("faiss_catalog.index", "wb") as f:
@@ -301,8 +309,8 @@ def load_remote_index(commit_sha):
             meta = pickle.loads(meta_res.content)
             idx = faiss.read_index("faiss_catalog.index")
             return idx, meta
-    except Exception:
-        pass
+    except Exception as e:
+        st.error(f"Failed to fetch remote catalog index: {e}")
     
     # Fallback to local files if offline
     if os.path.exists("faiss_catalog.index") and os.path.exists("catalog_meta.pkl"):
