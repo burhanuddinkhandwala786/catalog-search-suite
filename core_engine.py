@@ -1,21 +1,17 @@
-import os
 import torch
 import torchvision.transforms as T
+from PIL import Image
 import faiss
 import numpy as np
-from PIL import Image
-import warnings
-
-warnings.filterwarnings("ignore")
 
 class AIVectorEngine:
-    def __init__(self, model_size='small'):
-        model_name = 'dinov2_vits14' if model_size == 'small' else 'dinov2_vitb14'
-        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        
-        self.model = torch.hub.load('facebookresearch/dinov2', model_name).to(self.device)
+    def __init__(self):
+        # Load DINOv2 ViT-S/14 model for high-resolution pattern & feature extraction
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.model = torch.hub.load("facebookresearch/dinov2", "dinov2_vits14").to(self.device)
         self.model.eval()
 
+        # Biometric-grade image preprocessing pipeline
         self.transform = T.Compose([
             T.Resize((224, 224), interpolation=T.InterpolationMode.BICUBIC),
             T.ToTensor(),
@@ -25,89 +21,46 @@ class AIVectorEngine:
         self.index = None
         self.metadata = []
 
-    def _extract_color_histogram(self, image: Image.Image):
-        """Extracts a 64-bin normalized RGB color fingerprint to enforce strict color matching."""
-        img_resized = image.convert("RGB").resize((100, 100))
-        np_img = np.array(img_resized)
-        
-        # Calculate color histograms for R, G, B channels
-        rhist, _ = np.histogram(np_img[:, :, 0], bins=8, range=(0, 256), density=True)
-        ghist, _ = np.histogram(np_img[:, :, 1], bins=8, range=(0, 256), density=True)
-        bhist, _ = np.histogram(np_img[:, :, 2], bins=8, range=(0, 256), density=True)
-        
-        color_vec = np.concatenate([rhist, ghist, bhist])
-        return color_vec / (np.linalg.norm(color_vec) + 1e-7)
+    def get_single_embedding(self, pil_image: Image.Image) -> np.ndarray:
+        """Extracts a L2-normalized 384-dimensional visual feature vector."""
+        img_t = self.transform(pil_image.convert("RGB")).unsqueeze(0).to(self.device)
+        with torch.no_grad():
+            emb = self.model(img_t)
+            # L2 Normalization enables exact Cosine Similarity matching in FAISS / Qdrant
+            emb = torch.nn.functional.normalize(emb, p=2, dim=1)
+        return emb.cpu().numpy().astype("float32")
 
-    def get_single_embedding(self, image: Image.Image):
-        """Combines DINOv2 structural features (80%) + RGB color features (20%)."""
-        img_tensor = self.transform(image.convert("RGB")).unsqueeze(0).to(self.device)
-        with torch.inference_mode():
-            deep_emb = self.model(img_tensor)
-            deep_emb = deep_emb / torch.norm(deep_emb, p=2, dim=-1, keepdim=True)
-            deep_vec = deep_emb.cpu().numpy().flatten()
-
-        color_vec = self._extract_color_histogram(image)
-        
-        # Concatenate structure + color fingerprints
-        combined_vec = np.concatenate([deep_vec * 0.85, color_vec * 0.15])
-        combined_vec /= np.linalg.norm(combined_vec)
-        return combined_vec.astype('float32')
-
-    def get_batch_embeddings(self, pil_images, batch_size=16):
-        all_embeddings = []
+    def get_batch_embeddings(self, pil_images: list, batch_size: int = 16) -> np.ndarray:
+        """Extracts embeddings in batches for high-speed indexing."""
+        all_embs = []
         for i in range(0, len(pil_images), batch_size):
             batch = pil_images[i:i + batch_size]
-            
             tensors = torch.stack([self.transform(img.convert("RGB")) for img in batch]).to(self.device)
-            with torch.inference_mode():
-                deep_embs = self.model(tensors)
-                deep_embs = deep_embs / torch.norm(deep_embs, p=2, dim=-1, keepdim=True)
-                deep_vecs = deep_embs.cpu().numpy()
+            with torch.no_grad():
+                embs = self.model(tensors)
+                embs = torch.nn.functional.normalize(embs, p=2, dim=1)
+                all_embs.append(embs.cpu().numpy().astype("float32"))
+        return np.vstack(all_embs)
 
-            for idx, img in enumerate(batch):
-                c_vec = self._extract_color_histogram(img)
-                comb = np.concatenate([deep_vecs[idx] * 0.85, c_vec * 0.15])
-                comb /= np.linalg.norm(comb)
-                all_embeddings.append(comb)
-
-        return np.vstack(all_embeddings).astype('float32')
-
-    def create_index(self, embeddings_list, metadata_list):
-        embeddings = np.array(embeddings_list).astype('float32')
-        if embeddings.ndim == 3:
-            embeddings = embeddings.squeeze(1)
-            
+    def create_index(self, embeddings: np.ndarray, metadata: list):
+        """Creates an inner-product (cosine similarity) FAISS index."""
         dim = embeddings.shape[1]
         self.index = faiss.IndexFlatIP(dim)
         self.index.add(embeddings)
-        self.metadata = metadata_list
+        self.metadata = metadata
 
-    def search(self, query_embedding, top_k=5, min_confidence=0.78):
-        """
-        min_confidence (0.78 / 78%):
-        If a score is below 78%, it is treated as NOT FOUND instead of giving a wrong result.
-        """
+    def search(self, query_embedding: np.ndarray, top_k: int = 15, min_confidence: float = 0.10) -> list:
+        """Searches the vector space and returns ranked visual matches with detailed scoring."""
         if self.index is None or len(self.metadata) == 0:
             return []
-            
-        if query_embedding.ndim == 1:
-            query_embedding = np.expand_dims(query_embedding, axis=0)
-            
-        distances, indices = self.index.search(query_embedding, top_k * 3)
+
+        scores, indices = self.index.search(query_embedding, top_k)
         results = []
         
-        for idx, score in zip(indices[0], distances[0]):
-            if idx != -1 and idx < len(self.metadata):
-                confidence = float(np.clip(score, 0.0, 1.0))
-                
-                # STRICT GUARDRAIL: Filter out low-confidence false positives
-                if confidence >= min_confidence:
-                    results.append({
-                        "meta": self.metadata[idx],
-                        "score": confidence
-                    })
-                    
-            if len(results) == top_k:
-                break
-                
+        for score, idx in zip(scores[0], indices[0]):
+            if idx < len(self.metadata) and score >= min_confidence:
+                results.append({
+                    "score": float(score),
+                    "meta": self.metadata[idx]
+                })
         return results
