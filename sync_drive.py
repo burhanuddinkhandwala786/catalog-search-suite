@@ -84,20 +84,20 @@ def fetch_all_pdfs(service):
 
 def extract_page_tiles(pil_img):
     """
-    Generates sub-crop tiles (swatches) from a catalog page so textures/products
-    are indexed individually alongside full-page views.
+    Extracts multi-scale regions (full page, 4 quadrants, and center swatch)
+    to index shape, size, texture, pattern, color, and design separately.
     """
     w, h = pil_img.size
-    tiles = [pil_img]  # Full page image
+    tiles = [pil_img]  # Full page view
 
-    # 2x2 Grid Crop (4 tiles)
+    # Quadrant Crops
     half_w, half_h = w // 2, h // 2
     tiles.append(pil_img.crop((0, 0, half_w, half_h)))            # Top-Left
     tiles.append(pil_img.crop((half_w, 0, w, half_h)))           # Top-Right
     tiles.append(pil_img.crop((0, half_h, half_w, h)))           # Bottom-Left
     tiles.append(pil_img.crop((half_w, half_h, w, h)))          # Bottom-Right
 
-    # Center Tile Crop (where swatches usually sit)
+    # Center Swatch Focus
     margin_w, margin_h = w // 4, h // 4
     tiles.append(pil_img.crop((margin_w, margin_h, w - margin_w, h - margin_h)))
 
@@ -113,7 +113,6 @@ def extract_and_index_qdrant():
     engine = AIVectorEngine()
     drive_files = fetch_all_pdfs(service)
 
-    # Fetch already indexed catalog names from Qdrant
     scroll_res, _ = engine.client.scroll(
         collection_name=COLLECTION_NAME,
         limit=10000,
@@ -131,7 +130,7 @@ def extract_and_index_qdrant():
         print("✅ All catalogs up to date in Qdrant Cloud!")
         return True
 
-    print(f"🚀 Processing {len(new_drive_files)} NEW catalog(s) with Multi-Tile Indexing...")
+    print(f"🚀 Processing {len(new_drive_files)} NEW catalog(s) with Multi-Detail Indexing...")
 
     for f in new_drive_files:
         pdf_filename = f["name"].replace(" ", "_")
@@ -162,7 +161,6 @@ def extract_and_index_qdrant():
 
                 full_page_img = Image.open(rel_image_path).convert("RGB")
                 
-                # Extract sub-tiles (swatches/regions) for precision matching
                 tiles = extract_page_tiles(full_page_img)
                 tile_embeddings = engine.get_batch_embeddings(tiles, batch_size=len(tiles))
 
@@ -177,7 +175,7 @@ def extract_and_index_qdrant():
                                 "catalog": pdf_filename,
                                 "company": brand,
                                 "file_id": f["id"],
-                                "is_tile": tile_idx > 0
+                                "region_type": "full_page" if tile_idx == 0 else f"swatch_tile_{tile_idx}"
                             }
                         )
                     )
@@ -185,7 +183,7 @@ def extract_and_index_qdrant():
                 full_page_img.close()
 
             if points_to_upsert:
-                print(f"⚡ Uploading {len(points_to_upsert)} multi-tile vectors to Qdrant...")
+                print(f"⚡ Uploading {len(points_to_upsert)} multi-detail vectors to Qdrant Cloud...")
                 engine.upsert_points(points_to_upsert)
 
             print(f"✅ Finished indexing '{pdf_filename}'!")
@@ -199,7 +197,7 @@ def extract_and_index_qdrant():
                 except Exception:
                     pass
 
-    print("✅ Multi-tile indexing complete!")
+    print("✅ Multi-detail indexing complete!")
     return True
 
 
