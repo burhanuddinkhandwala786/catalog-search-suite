@@ -143,11 +143,13 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
+# --- CACHED DRIVE DOWNLOADER ---
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_pdf_bytes_cached(file_id):
     return fetch_pdf_bytes_from_drive(file_id)
 
 
+# Render match image safely
 def render_match_image(meta_dict):
     raw_path = meta_dict.get("page_path", "")
     filename = os.path.basename(raw_path) if raw_path else ""
@@ -176,6 +178,7 @@ def render_match_image(meta_dict):
     st.info(f"📍 **Match Reference:** {meta_dict.get('catalog', '')} — **Page {meta_dict.get('page', 1)}**")
 
 
+# Engine Initialization
 @st.cache_resource(show_spinner="Connecting to Visual Search Engine...")
 def load_engine():
     try:
@@ -232,11 +235,11 @@ with tab1:
         with st.expander("⚙️ Search Sensitivity Controls", expanded=False):
             min_confidence_slider = st.slider(
                 "Minimum Confidence Cutoff (%)",
-                min_value=20,
+                min_value=30,
                 max_value=80,
-                value=35,
+                value=40,
                 step=5,
-                help="Filters out weak or unrelated results. Set higher to avoid showing non-matching catalog pages."
+                help="Filters out weak or unrelated results. High values ensure only true matching catalog pages are shown."
             )
 
         search_file = st.file_uploader("Upload or Capture Reference Image", type=["jpg", "png", "jpeg"])
@@ -267,7 +270,7 @@ with tab1:
                         filtered_matches.append(m)
                 
                 exact_matches = [m for m in filtered_matches if m["score"] >= 0.50]
-                alternative_matches = [m for m in filtered_matches if confidence_threshold <= m["score"] < 0.50]
+                high_confidence_matches = [m for m in filtered_matches if confidence_threshold <= m["score"] < 0.50]
             
             st.markdown("<br>", unsafe_allow_html=True)
             
@@ -290,15 +293,14 @@ with tab1:
                     render_match_image(res["meta"])
                     st.divider()
                     
-            elif alternative_matches:
-                st.info("💡 **Displaying closest matching candidates within your confidence threshold:**")
-                st.markdown("<h4 style='color:#0f172a; font-weight:700; font-size:1.1rem;'>🎨 Recommended Alternatives</h4>", unsafe_allow_html=True)
-                for i, res in enumerate(alternative_matches[:3]):
+            elif high_confidence_matches:
+                st.markdown("<h4 style='color:#0f172a; font-weight:700; font-size:1.1rem;'>🎨 High Confidence Alternatives</h4>", unsafe_allow_html=True)
+                for i, res in enumerate(high_confidence_matches[:3]):
                     score_pct = res["score"] * 100
                     st.markdown(f"""
                     <div class="match-container-alt">
                         <div class="match-header-tag tag-alt">
-                            <span>Alternative #{i+1}</span> • <span>{score_pct:.1f}% Visual Similarity</span>
+                            <span>Candidate #{i+1}</span> • <span>{score_pct:.1f}% Visual Similarity</span>
                         </div>
                         <div class="meta-details-grid">
                             <div class="meta-item-box">🏢 <strong>Brand:</strong> {res['meta'].get('company', 'General')}</div>
@@ -310,7 +312,7 @@ with tab1:
                     render_match_image(res["meta"])
                     st.divider()
             else:
-                st.warning(f"❌ No matching pattern found above {min_confidence_slider}% confidence threshold. Try adjusting the crop area or selecting a specific brand.")
+                st.info(f"ℹ️ **No matching product found in current catalogs above {min_confidence_slider}% confidence.**\n\nIf this is a new product, please ensure its PDF catalog is uploaded to Google Drive and synced.")
 
 with tab2:
     st.markdown("<h4 style='color:#0f172a; font-weight:700; font-size:1.05rem; margin-top:10px;'>⚡ Cloud PDF Indexer</h4>", unsafe_allow_html=True)
