@@ -31,6 +31,18 @@ def extract_brand_name(pdf_filename):
     return "General"
 
 
+def fetch_pdf_bytes_from_drive(file_id):
+    """Fallback helper used by frontend to stream missing page images."""
+    url = f"https://drive.google.com/uc?export=download&id={file_id}"
+    try:
+        res = requests.get(url, timeout=15)
+        if res.status_code == 200:
+            return res.content
+    except Exception:
+        pass
+    return None
+
+
 def get_drive_service():
     service_account_info = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
     if not service_account_info:
@@ -71,6 +83,30 @@ def fetch_all_pdfs(service):
     return all_files
 
 
+def get_indexed_catalogs_from_qdrant(engine):
+    """Safely retrieves all indexed catalog names using cursor-based pagination."""
+    indexed_catalogs = set()
+    next_page_offset = None
+
+    while True:
+        scroll_res, next_page_offset = engine.client.scroll(
+            collection_name=COLLECTION_NAME,
+            limit=250,
+            offset=next_page_offset,
+            with_payload=["catalog"],
+            with_vectors=False
+        )
+
+        for point in scroll_res:
+            if point.payload and "catalog" in point.payload:
+                indexed_catalogs.add(point.payload["catalog"])
+
+        if next_page_offset is None:
+            break
+
+    return indexed_catalogs
+
+
 def extract_and_index_qdrant():
     ensure_directories()
     service = get_drive_service()
@@ -80,25 +116,20 @@ def extract_and_index_qdrant():
     engine = AIVectorEngine()
     drive_files = fetch_all_pdfs(service)
 
-    # Get already indexed catalogs from Qdrant
-    scroll_res, _ = engine.client.scroll(
-        collection_name=COLLECTION_NAME,
-        limit=10000,
-        with_payload=True,
-        with_vectors=False
-    )
-    indexed_catalogs = set(point.payload.get("catalog") for point in scroll_res if point.payload)
+    # Paginated retrieval of already indexed catalogs
+    indexed_catalogs = get_indexed_catalogs_from_qdrant(engine)
 
-    # Filter out files already indexed
-    new_drive_files = [f for f in drive_files if f["name"] not in indexed_catalogs and f["name"].replace(" ", "_") not in indexed_catalogs]
+    # Filter out already indexed files
+    new_drive_files = [
+        f for f in drive_files 
+        if f["name"] not in indexed_catalogs and f["name"].replace(" ", "_") not in indexed_catalogs
+    ]
 
     if not new_drive_files:
         print("✅ All catalogs up to date in Qdrant Cloud!")
         return True
 
     print(f"🚀 Processing {len(new_drive_files)} NEW catalog(s) for Qdrant Cloud...")
-
-    points_to_upsert = []
 
     for f in new_drive_files:
         pdf_filename = f["name"].replace(" ", "_")
@@ -117,45 +148,60 @@ def extract_and_index_qdrant():
             doc = fitz.open(local_pdf_path)
             print(f"📖 Processing '{pdf_filename}' -> Brand: [{brand}] ({len(doc)} pages)...")
 
-            pil_images = []
-            payloads = []
+            # Process in memory-safe batches of 16 pages
+            BATCH_SIZE = 16
+            for start_idx in range(0, len(doc), BATCH_SIZE):
+                batch_doc = doc[start_idx : start_idx + BATCH_SIZE]
+                pil_images = []
+                payloads = []
 
-            for page_num in range(len(doc)):
-                page = doc[page_num]
-                pix = page.get_pixmap(dpi=130)
+                for page_offset, page in enumerate(batch_doc):
+                    actual_page_num = start_idx + page_offset + 1
+                    pix = page.get_pixmap(dpi=130)
 
-                img_filename = f"{pdf_filename}_page_{page_num + 1}.jpg"
-                rel_image_path = os.path.join(PAGE_DIR, img_filename)
-                pix.save(rel_image_path)
+                    img_filename = f"{pdf_filename}_page_{actual_page_num}.jpg"
+                    rel_image_path = os.path.join(PAGE_DIR, img_filename)
+                    pix.save(rel_image_path)
 
-                pil_images.append(Image.open(rel_image_path).convert("RGB"))
-                payloads.append({
-                    "page_path": rel_image_path,
-                    "page": page_num + 1,
-                    "catalog": pdf_filename,
-                    "company": brand,
-                    "file_id": f["id"]
-                })
+                    img = Image.open(rel_image_path).convert("RGB")
+                    pil_images.append(img)
+                    payloads.append({
+                        "page_path": rel_image_path,
+                        "page": actual_page_num,
+                        "catalog": pdf_filename,
+                        "company": brand,
+                        "file_id": f["id"]
+                    })
 
-            if pil_images:
-                embeddings = engine.get_batch_embeddings(pil_images, batch_size=16)
-                for vector, payload in zip(embeddings, payloads):
-                    points_to_upsert.append(
+                if pil_images:
+                    embeddings = engine.get_batch_embeddings(pil_images, batch_size=BATCH_SIZE)
+                    points_to_upsert = [
                         PointStruct(
                             id=str(uuid.uuid4()),
                             vector=vector,
                             payload=payload
                         )
-                    )
+                        for vector, payload in zip(embeddings, payloads)
+                    ]
+                    engine.upsert_points(points_to_upsert)
+
+                    # Explicitly close image pointers to prevent RAM bloat
+                    for img in pil_images:
+                        img.close()
+
+            print(f"✅ Finished indexing '{pdf_filename}'!")
 
         except Exception as e:
             print(f"❌ Error extracting '{pdf_filename}': {e}")
+        finally:
+            # Clean up raw local PDF after processing
+            if os.path.exists(local_pdf_path):
+                try:
+                    os.remove(local_pdf_path)
+                except Exception:
+                    pass
 
-    if points_to_upsert:
-        print(f"⚡ Uploading {len(points_to_upsert)} vectors to Qdrant Cloud...")
-        engine.upsert_points(points_to_upsert)
-        print("✅ Qdrant Cloud database successfully updated!")
-
+    print("✅ All new catalogs processed and pushed to Qdrant Cloud!")
     return True
 
 
