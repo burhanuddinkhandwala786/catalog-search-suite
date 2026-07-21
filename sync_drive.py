@@ -1,6 +1,7 @@
 import os
 import json
 import pickle
+import re
 import faiss
 import fitz  # PyMuPDF
 from PIL import Image
@@ -23,8 +24,29 @@ def ensure_directories():
     os.makedirs(PDF_DIR, exist_ok=True)
 
 
+def extract_brand_name(pdf_filename):
+    """
+    Smart Brand Extractor: Cleanly extracts the brand/company name 
+    from file names like 'Marbelo_Brochure.pdf' -> 'Marbelo'
+    """
+    clean_name = os.path.splitext(pdf_filename)[0]
+    
+    # Replace separators with spaces
+    clean_name = re.sub(r'[-_]', ' ', clean_name)
+    
+    # Common generic words to exclude from brand title
+    ignore_words = {'catalog', 'catalogue', 'brochure', 'folder', 'mobile', 'pdf', 'v1', 'v2', 'v3', 'vol1', 'vol2', 'compressed', 'for', 'men', 'women'}
+    words = [w for w in clean_name.split() if w.lower() not in ignore_words]
+    
+    if words:
+        # Take the first 1 or 2 core primary words as the Brand Name
+        brand = " ".join(words[:2]).title()
+        return brand
+    
+    return "General"
+
+
 def fetch_pdf_bytes_from_drive(file_id):
-    """Downloads raw PDF bytes from public export or Drive link."""
     url = f"https://drive.google.com/uc?export=download&id={file_id}"
     try:
         res = requests.get(url, timeout=15)
@@ -60,7 +82,6 @@ def get_drive_service():
 
 
 def fetch_all_pdfs(service):
-    """Recursively fetches all PDFs across Drive root and subfolders."""
     all_files = []
     page_token = None
     query = "mimeType='application/pdf' and trashed=false"
@@ -68,7 +89,7 @@ def fetch_all_pdfs(service):
     while True:
         response = service.files().list(
             q=query,
-            fields="nextPageToken, files(id, name)",
+            fields="nextPageToken, files(id, name, parents)",
             pageToken=page_token
         ).execute()
 
@@ -83,7 +104,6 @@ def fetch_all_pdfs(service):
 
 
 def cleanup_deleted_catalogs(drive_files, existing_meta, engine):
-    """Removes local images and metadata for PDFs deleted from Google Drive."""
     active_pdf_names = set(f["name"] for f in drive_files) | set(f["name"].replace(" ", "_") for f in drive_files)
     
     updated_meta = []
@@ -97,7 +117,6 @@ def cleanup_deleted_catalogs(drive_files, existing_meta, engine):
             updated_meta.append(m)
         else:
             deleted_catalogs.add(catalog_name)
-            # Delete corresponding extracted image from catalog_pages/
             img_path = m.get("page_path", "")
             if img_path and os.path.exists(img_path):
                 try:
@@ -107,9 +126,8 @@ def cleanup_deleted_catalogs(drive_files, existing_meta, engine):
 
     if deleted_catalogs:
         print(f"🗑️ Detected {len(deleted_catalogs)} deleted PDF(s) from Drive: {list(deleted_catalogs)}")
-        print("🔄 Rebuilding FAISS index for active catalogs to stay under storage limits...")
+        print("🔄 Rebuilding index for active catalogs...")
         
-        # Re-embed remaining active images to ensure clean vector index alignment
         if updated_meta:
             images = []
             valid_meta = []
@@ -128,41 +146,34 @@ def cleanup_deleted_catalogs(drive_files, existing_meta, engine):
                 faiss.write_index(engine.index, INDEX_FILE)
                 with open(META_FILE, "wb") as f:
                     pickle.dump(valid_meta, f)
-                print(f"✅ Clean index rebuilt with {len(valid_meta)} active pages.")
                 return valid_meta, True
         else:
-            # If all PDFs were deleted from Drive
             if os.path.exists(INDEX_FILE):
                 os.remove(INDEX_FILE)
             if os.path.exists(META_FILE):
                 os.remove(META_FILE)
-            print("🧹 All catalogs deleted from Drive. Cleared index completely.")
             return [], True
 
     return existing_meta, False
 
 
 def download_unindexed_pdfs(service, drive_files, indexed_catalogs):
-    """Only downloads PDFs that are NOT already in the index."""
     ensure_directories()
 
     if not drive_files:
-        print("⚠️ 0 PDF files returned by Drive API.")
         return []
 
     new_files = []
     for f in drive_files:
         safe_filename = f["name"].replace(" ", "_")
         
-        # Check if catalog is already processed
         if f["name"] in indexed_catalogs or safe_filename in indexed_catalogs:
-            print(f"⚡ Skipping already indexed catalog: '{safe_filename}'")
             continue
 
         file_id = f["id"]
         local_pdf_path = os.path.join(PDF_DIR, safe_filename)
 
-        print(f"⬇️ New Catalog Detected! Downloading '{safe_filename}'...")
+        print(f"⬇️ Downloading '{safe_filename}'...")
         request = service.files().get_media(fileId=file_id)
         with open(local_pdf_path, "wb") as fh:
             downloader = MediaIoBaseDownload(fh, request)
@@ -187,17 +198,15 @@ def extract_and_index_incremental():
             with open(META_FILE, "rb") as f:
                 existing_meta = pickle.load(f)
                 existing_catalogs = set(m.get("catalog", "") for m in existing_meta)
-            print(f"📦 Loaded existing index metadata ({len(existing_meta)} pages across {len(existing_catalogs)} catalogs).")
         except Exception as e:
-            print(f"⚠️ Failed to load existing metadata, starting fresh: {e}")
+            print(f"⚠️ Start fresh: {e}")
 
     if os.path.exists(INDEX_FILE):
         try:
             index = faiss.read_index(INDEX_FILE)
         except Exception as e:
-            print(f"⚠️ Failed to load existing index: {e}")
+            print(f"⚠️ Failed to load index: {e}")
 
-    # Connect to Drive
     service = get_drive_service()
     if not service:
         raise RuntimeError("Drive Service authentication failed.")
@@ -205,24 +214,21 @@ def extract_and_index_incremental():
     engine = AIVectorEngine()
     drive_files = fetch_all_pdfs(service)
 
-    # Clean up any PDFs deleted from Drive before processing new ones
     existing_meta, cleaned_up = cleanup_deleted_catalogs(drive_files, existing_meta, engine)
     existing_catalogs = set(m.get("catalog", "") for m in existing_meta)
 
-    # Download new PDFs
     new_pdf_names = download_unindexed_pdfs(service, drive_files, existing_catalogs)
 
-    # Check for any local unindexed PDFs sitting in pdf_catalogs/
     local_pdfs = [f for f in os.listdir(PDF_DIR) if f.lower().endswith(".pdf")]
     unindexed_local_pdfs = [f for f in local_pdfs if f not in existing_catalogs and f.replace(" ", "_") not in existing_catalogs]
 
     all_new_pdfs = list(set(new_pdf_names + unindexed_local_pdfs))
 
     if not all_new_pdfs:
-        print("✅ No new PDF catalogs detected! All files are up to date.")
+        print("✅ All catalog files are up to date.")
         return True
 
-    print(f"🚀 Processing {len(all_new_pdfs)} NEW catalog PDF file(s)...")
+    print(f"🚀 Processing {len(all_new_pdfs)} catalog PDF file(s)...")
 
     pages_to_embed = []
     new_metadata = []
@@ -231,11 +237,12 @@ def extract_and_index_incremental():
         pdf_path = os.path.join(PDF_DIR, pdf_filename)
         safe_name = pdf_filename.replace(" ", "_")
 
-        company = "Godrej" if "godrej" in pdf_filename.lower() else ("Viva" if "viva" in pdf_filename.lower() or "hpl" in pdf_filename.lower() else "General")
+        # Dynamic Smart Brand Extractor
+        company = extract_brand_name(pdf_filename)
 
         try:
             doc = fitz.open(pdf_path)
-            print(f"📖 Extracting '{pdf_filename}' ({len(doc)} pages)...")
+            print(f"📖 Processing '{pdf_filename}' -> Brand: [{company}] ({len(doc)} pages)...")
 
             for page_num in range(len(doc)):
                 page = doc[page_num]
@@ -259,7 +266,6 @@ def extract_and_index_incremental():
             print(f"❌ Error reading '{pdf_filename}': {e}")
 
     if pages_to_embed:
-        print(f"⚡ Generating embeddings ONLY for {len(pages_to_embed)} new page(s)...")
         new_embeddings = engine.get_batch_embeddings(pages_to_embed, batch_size=16)
 
         if os.path.exists(INDEX_FILE):
@@ -276,7 +282,7 @@ def extract_and_index_incremental():
         with open(META_FILE, "wb") as f:
             pickle.dump(combined_metadata, f)
 
-        print(f"✅ Incremental indexing complete! Added {len(pages_to_embed)} pages. Total pages in index: {len(combined_metadata)}.")
+        print(f"✅ Indexed {len(pages_to_embed)} pages with proper Brand labels!")
 
     return True
 
@@ -285,7 +291,7 @@ def run_auto_sync():
     try:
         return extract_and_index_incremental()
     except Exception as e:
-        print(f"❌ Incremental Sync Failed: {e}")
+        print(f"❌ Sync Failed: {e}")
         return False
 
 
