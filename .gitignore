@@ -1,10 +1,9 @@
 catalog_pages/
 pdf_catalogs/
+faiss_catalog.index
+catalog_meta.pkl
 *.jpg
 *.png
 *.pdf
-pdf_catalogs/
-faiss_catalog.index
-catalog_meta.pkl
 *.pkl
 *.index
