@@ -1,0 +1,5 @@
+pdf_catalogs/
+faiss_catalog.index
+catalog_meta.pkl
+*.pkl
+*.index
