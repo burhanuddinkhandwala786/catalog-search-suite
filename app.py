@@ -280,8 +280,14 @@ with tab1:
                     filtered_matches = []
                     for m in raw_matches:
                         meta = m.get("meta", {})
+                        
+                        # EXCLUDE COVER PAGES (Page 1)
+                        if meta.get("page", 1) == 1:
+                            continue
+                            
                         company_match = (selected_company == "All Brand Libraries" or meta.get("company", "General") == selected_company)
                         catalog_match = (not catalog_keyword or catalog_keyword.lower() in meta.get("catalog", "").lower())
+                        
                         if company_match and catalog_match:
                             filtered_matches.append(m)
                     
