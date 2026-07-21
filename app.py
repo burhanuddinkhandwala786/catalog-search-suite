@@ -330,11 +330,12 @@ with tab1:
                         res = requests.post(url, json=data, headers=headers)
                         
                         if res.status_code == 204:
+                            # Force clear RAM cache so new FAISS index loads
+                            st.cache_resource.clear()
                             st.success("Sync triggered on GitHub! New catalogs will appear in ~1–2 minutes.")
                         else:
                             st.error(f"Failed to trigger sync: {res.status_code}")
                 else:
-                    # Fallback to local sync if Secrets are not set
                     with st.spinner("Syncing Google Drive catalogs..."):
                         if run_auto_sync():
                             st.cache_resource.clear()
