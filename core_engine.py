@@ -83,7 +83,7 @@ class AIVectorEngine:
             })
         return matches
 
-    def get_all_brands((self) -> list:
+    def get_all_brands(self) -> list:
         """Extracts unique brand lists stored across Qdrant payloads."""
         # Scroll through payloads to fetch unique company tags
         scroll_res, _ = self.client.scroll(collection_name=COLLECTION_NAME, limit=10000, with_payload=True, with_vectors=False)
