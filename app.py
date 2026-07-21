@@ -382,43 +382,45 @@ with tab1:
             st.markdown("<br>", unsafe_allow_html=True)
             
             if exact_matches:
-                st.markdown("<h4 style='color:#0f172a; font-weight:700; font-size:1.1rem;'>🎯 Exact Match Results</h4>", unsafe_allow_html=True)
-                for i, res in enumerate(exact_matches[:3]):
-                    score_pct = res["score"] * 100
-                    st.markdown(f"""
-                    <div class="match-container-exact">
-                        <div class="match-header-tag tag-exact">
-                            <span>Direct Match #{i+1}</span> • <span>{score_pct:.1f}% Confidence</span>
-                        </div>
-                        <div class="meta-details-grid">
-                            <div class="meta-item-box">🏢 <strong>Brand:</strong> {res['meta'].get('company', 'General')}</div>
-                            <div class="meta-item-box">📖 <strong>Catalog:</strong> {res['meta']['catalog']}</div>
-                            <div class="meta-item-box">📄 <strong>Location:</strong> Page {res['meta']['page']}</div>
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
-                    render_match_image(res["meta"])
-                    st.divider()
-                    
-            elif alternative_matches:
-                st.info("💡 **No exact product match found. Displaying closest matching alternatives:**")
-                st.markdown("<h4 style='color:#0f172a; font-weight:700; font-size:1.1rem;'>🎨 Recommended Alternatives</h4>", unsafe_allow_html=True)
-                for i, res in enumerate(alternative_matches[:3]):
-                    score_pct = res["score"] * 100
-                    st.markdown(f"""
-                    <div class="match-container-alt">
-                        <div class="match-header-tag tag-alt">
-                            <span>Alternative #{i+1}</span> • <span>{score_pct:.1f}% Visual Similarity</span>
-                        </div>
-                        <div class="meta-details-grid">
-                            <div class="meta-item-box">🏢 <strong>Brand:</strong> {res['meta'].get('company', 'General')}</div>
-                            <div class="meta-item-box">📖 <strong>Catalog:</strong> {res['meta']['catalog']}</div>
-                            <div class="meta-item-box">📄 <strong>Location:</strong> Page {res['meta']['page']}</div>
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
-                    render_match_image(res["meta"])
-                    st.divider()
+    st.markdown("<h4 style='color:#0f172a; font-weight:700;'>🎯 Direct Catalog Match</h4>", unsafe_allow_html=True)
+    for i, res in enumerate(exact_matches[:3]):
+        meta = res['meta']
+        score_pct = res["score"] * 100
+        st.markdown(f"""
+        <div class="match-container-exact">
+            <div class="match-header-tag tag-exact">
+                <span>Exact Match #{i+1}</span> • <span>{score_pct:.1f}% Confidence</span>
+            </div>
+            <div class="meta-details-grid">
+                <div class="meta-item-box">🏢 <strong>Brand / Company:</strong> {meta.get('company', 'General')}</div>
+                <div class="meta-item-box">📖 <strong>Catalog File:</strong> {meta.get('catalog', 'N/A')}</div>
+                <div class="meta-item-box">📍 <strong>Order Location:</strong> Page {meta.get('page', 1)}</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        render_match_image(meta)
+        st.divider()
+
+elif alternative_matches:
+    st.info("💡 **Exact item not found in current active catalogs. Showing top 3 closest matching alternatives for direct ordering:**")
+    st.markdown("<h4 style='color:#0f172a; font-weight:700;'>🎨 Recommended Closest Alternatives</h4>", unsafe_allow_html=True)
+    for i, res in enumerate(alternative_matches[:3]):
+        meta = res['meta']
+        score_pct = res["score"] * 100
+        st.markdown(f"""
+        <div class="match-container-alt">
+            <div class="match-header-tag tag-alt">
+                <span>Alternative Match #{i+1}</span> • <span>{score_pct:.1f}% Visual Similarity</span>
+            </div>
+            <div class="meta-details-grid">
+                <div class="meta-item-box">🏢 <strong>Brand / Company:</strong> {meta.get('company', 'General')}</div>
+                <div class="meta-item-box">📖 <strong>Catalog File:</strong> {meta.get('catalog', 'N/A')}</div>
+                <div class="meta-item-box">📍 <strong>Order Location:</strong> Page {meta.get('page', 1)}</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        render_match_image(meta)
+        st.divider()
             else:
                 st.warning(f"❌ No matching pattern found under '{selected_company}'. Try adjusting crop or selecting 'All Brand Libraries'.")
     else:
