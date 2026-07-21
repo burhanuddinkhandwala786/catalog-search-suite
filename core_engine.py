@@ -25,9 +25,20 @@ def get_secret(key_name):
     return None
 
 
+def pad_to_square(pil_img: Image.Image, bg_color=(255, 255, 255)) -> Image.Image:
+    """Pads non-square images with a white background to preserve exact shape & scale proportions."""
+    img = pil_img.convert("RGB")
+    w, h = img.size
+    max_side = max(w, h)
+    new_img = Image.new("RGB", (max_side, max_side), bg_color)
+    offset = ((max_side - w) // 2, (max_side - h) // 2)
+    new_img.paste(img, offset)
+    return new_img
+
+
 class AIVectorEngine:
     def __init__(self):
-        # Load DINOv2 visual feature extractor
+        # DINOv2 neural feature extractor (captures texture, pattern, shape, color, and design)
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.model = torch.hub.load("facebookresearch/dinov2", "dinov2_vits14").to(self.device)
         self.model.eval()
@@ -38,7 +49,6 @@ class AIVectorEngine:
             T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ])
 
-        # Fetch Qdrant connection credentials
         qdrant_url = get_secret("QDRANT_URL")
         qdrant_api_key = get_secret("QDRANT_API_KEY")
 
@@ -58,7 +68,8 @@ class AIVectorEngine:
             )
 
     def get_single_embedding(self, pil_image: Image.Image) -> list:
-        img_t = self.transform(pil_image.convert("RGB")).unsqueeze(0).to(self.device)
+        padded_img = pad_to_square(pil_image)
+        img_t = self.transform(padded_img).unsqueeze(0).to(self.device)
         with torch.no_grad():
             emb = self.model(img_t)
             emb = torch.nn.functional.normalize(emb, p=2, dim=1)
@@ -68,7 +79,7 @@ class AIVectorEngine:
         all_embs = []
         for i in range(0, len(pil_images), batch_size):
             batch = pil_images[i:i + batch_size]
-            tensors = torch.stack([self.transform(img.convert("RGB")) for img in batch]).to(self.device)
+            tensors = torch.stack([self.transform(pad_to_square(img)) for img in batch]).to(self.device)
             with torch.no_grad():
                 embs = self.model(tensors)
                 embs = torch.nn.functional.normalize(embs, p=2, dim=1)
@@ -81,11 +92,10 @@ class AIVectorEngine:
             points=points
         )
 
-    def search(self, query_vector: list, top_k: int = 15, min_confidence: float = 0.10) -> list:
-        """Executes vector similarity search safely across all qdrant-client versions."""
+    def search(self, query_vector: list, top_k: int = 25, min_confidence: float = 0.40) -> list:
+        """Executes vector similarity search with page-level deduplication."""
         matches = []
         try:
-            # Modern API (qdrant-client >= 1.10.0)
             response = self.client.query_points(
                 collection_name=COLLECTION_NAME,
                 query=query_vector,
@@ -94,7 +104,6 @@ class AIVectorEngine:
             )
             points = response.points
         except Exception:
-            # Legacy API fallback
             points = self.client.search(
                 collection_name=COLLECTION_NAME,
                 query_vector=query_vector,
@@ -102,14 +111,18 @@ class AIVectorEngine:
                 score_threshold=min_confidence
             )
 
+        seen_pages = set()
         for res in points:
-            matches.append({
-                "score": float(res.score),
-                "meta": res.payload
-            })
+            page_key = f"{res.payload.get('catalog')}_p{res.payload.get('page')}"
+            if page_key not in seen_pages:
+                seen_pages.add(page_key)
+                matches.append({
+                    "score": float(res.score),
+                    "meta": res.payload
+                })
         return matches
 
     def get_all_brands(self) -> list:
-        scroll_res, _ = self.client.scroll(collection_name=COLLECTION_NAME, limit=10000, with_payload=True, with_vectors=False)
+        scroll_res, _ = self.client.scroll(collection_name=COLLECTION_NAME, limit=10000, with_payload=["company"], with_vectors=False)
         companies = set(point.payload.get("company", "General") for point in scroll_res if point.payload)
         return sorted(list(companies))
