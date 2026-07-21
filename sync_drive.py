@@ -73,7 +73,9 @@ def fetch_all_pdfs(service):
         response = service.files().list(
             q=query,
             fields="nextPageToken, files(id, name)",
-            pageToken=page_token
+            pageToken=page_token,
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True
         ).execute()
         all_files.extend(response.get("files", []))
         page_token = response.get("nextPageToken", None)
