@@ -65,19 +65,11 @@ st.markdown("""
         margin: 0;
     }
 
-    /* DROPDOWN STYLING */
-    div[data-baseweb="select"] {
+    /* DROPDOWN & INPUT STYLING */
+    div[data-baseweb="select"], input {
         border-radius: 8px !important;
         border: 1.5px solid #cbd5e1 !important;
         background-color: #f8fafc !important;
-        transition: all 0.2s ease !important;
-    }
-    div[data-baseweb="select"]:hover {
-        border-color: #b8976c !important;
-    }
-    div[data-baseweb="select"] * {
-        color: #0f172a !important;
-        font-weight: 600 !important;
     }
 
     /* BUTTON STYLING */
@@ -89,15 +81,6 @@ st.markdown("""
         height: 42px !important;
         font-weight: 700 !important;
         font-size: 0.88rem !important;
-        transition: all 0.2s ease !important;
-        box-shadow: 0 2px 5px rgba(184, 151, 108, 0.25) !important;
-    }
-    .stButton>button:hover {
-        background-color: #a38258 !important;
-        border-color: #8c6d46 !important;
-        color: #ffffff !important;
-        transform: translateY(-1px) !important;
-        box-shadow: 0 4px 10px rgba(184, 151, 108, 0.35) !important;
     }
 
     /* MATCH CARDS & TAGS */
@@ -115,7 +98,6 @@ st.markdown("""
         padding: 20px;
         margin-bottom: 20px;
     }
-    
     .match-header-tag {
         display: inline-flex;
         align-items: center;
@@ -161,19 +143,15 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-# --- CACHED DRIVE DOWNLOADER ---
-# Prevents re-downloading the entire PDF every time an image renders
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_pdf_bytes_cached(file_id):
     return fetch_pdf_bytes_from_drive(file_id)
 
 
-# Render match image safely
 def render_match_image(meta_dict):
     raw_path = meta_dict.get("page_path", "")
     filename = os.path.basename(raw_path) if raw_path else ""
 
-    # 1. Check local container disk
     local_img_path = os.path.join("catalog_pages", filename) if filename else ""
     if local_img_path and os.path.exists(local_img_path):
         st.image(local_img_path, use_container_width=True)
@@ -182,7 +160,6 @@ def render_match_image(meta_dict):
         st.image(raw_path, use_container_width=True)
         return
 
-    # 2. Fast Cached PDF rendering from Drive
     if "file_id" in meta_dict and meta_dict["file_id"]:
         pdf_bytes = fetch_pdf_bytes_cached(meta_dict["file_id"])
         if pdf_bytes:
@@ -199,7 +176,6 @@ def render_match_image(meta_dict):
     st.info(f"📍 **Match Reference:** {meta_dict.get('catalog', '')} — **Page {meta_dict.get('page', 1)}**")
 
 
-# Engine Initialization
 @st.cache_resource(show_spinner="Connecting to Visual Search Engine...")
 def load_engine():
     try:
@@ -220,7 +196,6 @@ st.markdown("""
 
 tab1, tab2 = st.tabs(["🔍 Visual Pattern Search", "⚙️ Index Management"])
 
-# TAB 1: VISUAL SEARCH
 with tab1:
     if engine is not None:
         try:
@@ -230,9 +205,11 @@ with tab1:
             
         companies.insert(0, "All Brand Libraries")
         
-        col_filter, col_sync = st.columns([3.5, 1], vertical_alignment="bottom")
+        col_filter, col_search_kw, col_sync = st.columns([2.5, 2, 1], vertical_alignment="bottom")
         with col_filter:
             selected_company = st.selectbox("Select Brand Collection:", companies)
+        with col_search_kw:
+            catalog_keyword = st.text_input("Filter Catalog Name (Optional):", placeholder="e.g. Acroglass, Hardware")
         with col_sync:
             if st.button("🔄 Sync Drive", use_container_width=True):
                 gh_token = st.secrets.get("GITHUB_TOKEN")
@@ -244,20 +221,23 @@ with tab1:
                             "Accept": "application/vnd.github.v3+json",
                             "User-Agent": "Streamlit-Catalog-App"
                         }
-                        data = {"event_type": "drive-updated"}
-                        res = requests.post(url, json=data, headers=headers)
-                        
+                        res = requests.post(url, json={"event_type": "drive-updated"}, headers=headers)
                         if res.status_code == 204:
                             st.cache_resource.clear()
-                            st.success("Sync triggered! New catalogs will load in ~1–2 minutes.")
+                            st.success("Sync triggered!")
                         else:
-                            st.error(f"Failed to trigger sync: {res.status_code}")
-                else:
-                    with st.spinner("Syncing Google Drive catalogs..."):
-                        if run_auto_sync():
-                            st.cache_resource.clear()
-                            st.success("Catalogs synchronized!")
-                            st.rerun()
+                            st.error(f"Failed: {res.status_code}")
+
+        # Sensitivity Controls
+        with st.expander("⚙️ Search Sensitivity Controls", expanded=False):
+            min_confidence_slider = st.slider(
+                "Minimum Confidence Cutoff (%)",
+                min_value=20,
+                max_value=80,
+                value=35,
+                step=5,
+                help="Filters out weak or unrelated results. Set higher to avoid showing non-matching catalog pages."
+            )
 
         search_file = st.file_uploader("Upload or Capture Reference Image", type=["jpg", "png", "jpeg"])
         
@@ -265,8 +245,6 @@ with tab1:
             raw_pil_img = Image.open(io.BytesIO(search_file.getvalue())).convert("RGB")
             
             st.markdown("<p style='font-weight:600; color:#334155; font-size:0.88rem; margin-top:16px;'>Crop Target Texture or Pattern Area:</p>", unsafe_allow_html=True)
-            
-            # Set realtime_update=False to eliminate cropper jitter/lag
             cropped_img = st_cropper(
                 raw_pil_img, 
                 realtime_update=False, 
@@ -276,15 +254,20 @@ with tab1:
             
             with st.spinner("Searching neural database for visual matches..."):
                 query_vector = engine.get_single_embedding(cropped_img)
-                raw_matches = engine.search(query_vector, top_k=15, min_confidence=0.10)
+                confidence_threshold = min_confidence_slider / 100.0
+                raw_matches = engine.search(query_vector, top_k=25, min_confidence=confidence_threshold)
                 
-                filtered_matches = [
-                    m for m in raw_matches 
-                    if selected_company == "All Brand Libraries" or m["meta"].get("company", "General") == selected_company
-                ]
+                # Apply brand and catalog keyword filtering
+                filtered_matches = []
+                for m in raw_matches:
+                    meta = m.get("meta", {})
+                    company_match = (selected_company == "All Brand Libraries" or meta.get("company", "General") == selected_company)
+                    catalog_match = (not catalog_keyword or catalog_keyword.lower() in meta.get("catalog", "").lower())
+                    if company_match and catalog_match:
+                        filtered_matches.append(m)
                 
                 exact_matches = [m for m in filtered_matches if m["score"] >= 0.50]
-                alternative_matches = [m for m in filtered_matches if 0.10 <= m["score"] < 0.50]
+                alternative_matches = [m for m in filtered_matches if confidence_threshold <= m["score"] < 0.50]
             
             st.markdown("<br>", unsafe_allow_html=True)
             
@@ -308,7 +291,7 @@ with tab1:
                     st.divider()
                     
             elif alternative_matches:
-                st.info("💡 **No exact product match found. Displaying closest matching alternatives:**")
+                st.info("💡 **Displaying closest matching candidates within your confidence threshold:**")
                 st.markdown("<h4 style='color:#0f172a; font-weight:700; font-size:1.1rem;'>🎨 Recommended Alternatives</h4>", unsafe_allow_html=True)
                 for i, res in enumerate(alternative_matches[:3]):
                     score_pct = res["score"] * 100
@@ -327,11 +310,8 @@ with tab1:
                     render_match_image(res["meta"])
                     st.divider()
             else:
-                st.warning(f"❌ No matching pattern found under '{selected_company}'. Try adjusting crop or selecting 'All Brand Libraries'.")
-    else:
-        st.error("Engine failed to initialize. Please verify your Qdrant secrets in Streamlit Cloud.")
+                st.warning(f"❌ No matching pattern found above {min_confidence_slider}% confidence threshold. Try adjusting the crop area or selecting a specific brand.")
 
-# TAB 2: MANUAL WEB INDEXER
 with tab2:
     st.markdown("<h4 style='color:#0f172a; font-weight:700; font-size:1.05rem; margin-top:10px;'>⚡ Cloud PDF Indexer</h4>", unsafe_allow_html=True)
     if st.button("🚀 Trigger Google Drive Sync", type="primary"):
