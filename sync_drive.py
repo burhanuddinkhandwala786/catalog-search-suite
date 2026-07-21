@@ -84,11 +84,11 @@ def fetch_all_pdfs(service):
 
 def extract_page_tiles(pil_img):
     """
-    Extracts multi-scale regions (full page, 4 quadrants, and center swatch)
-    to index shape, size, texture, pattern, color, and design separately.
+    Extracts multi-scale region patches (Full Page + 4 Quadrants + Center Swatch)
+    allowing fine-grained patch-level visual matching.
     """
     w, h = pil_img.size
-    tiles = [pil_img]  # Full page view
+    tiles = [pil_img]  # Full Page
 
     # Quadrant Crops
     half_w, half_h = w // 2, h // 2
@@ -130,7 +130,7 @@ def extract_and_index_qdrant():
         print("✅ All catalogs up to date in Qdrant Cloud!")
         return True
 
-    print(f"🚀 Processing {len(new_drive_files)} NEW catalog(s) with Multi-Detail Indexing...")
+    print(f"🚀 Processing {len(new_drive_files)} NEW catalog(s) with Patch-Level Indexing...")
 
     for f in new_drive_files:
         pdf_filename = f["name"].replace(" ", "_")
@@ -151,7 +151,7 @@ def extract_and_index_qdrant():
 
             points_to_upsert = []
 
-            # Start loop at page_num = 1 (Page 2 of PDF) to skip cover pages entirely!
+            # Start at page_num = 1 (Page 2) to skip cover pages
             for page_num in range(1, len(doc)):
                 page = doc[page_num]
                 pix = page.get_pixmap(dpi=130)
@@ -172,11 +172,11 @@ def extract_and_index_qdrant():
                             vector=vector,
                             payload={
                                 "page_path": rel_image_path,
-                                "page": page_num + 1,  # Page 2, 3, 4...
+                                "page": page_num + 1,
                                 "catalog": pdf_filename,
                                 "company": brand,
                                 "file_id": f["id"],
-                                "region_type": "full_page" if tile_idx == 0 else f"swatch_tile_{tile_idx}"
+                                "patch_type": "full" if tile_idx == 0 else f"patch_{tile_idx}"
                             }
                         )
                     )
@@ -184,7 +184,7 @@ def extract_and_index_qdrant():
                 full_page_img.close()
 
             if points_to_upsert:
-                print(f"⚡ Uploading {len(points_to_upsert)} multi-detail vectors to Qdrant Cloud...")
+                print(f"⚡ Uploading {len(points_to_upsert)} patch vectors to Qdrant Cloud...")
                 engine.upsert_points(points_to_upsert)
 
             print(f"✅ Finished indexing '{pdf_filename}'!")
@@ -198,7 +198,7 @@ def extract_and_index_qdrant():
                 except Exception:
                     pass
 
-    print("✅ Multi-detail indexing complete!")
+    print("✅ Patch-level indexing complete!")
     return True
 
 
