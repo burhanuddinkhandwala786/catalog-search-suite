@@ -65,22 +65,35 @@ def get_drive_service():
 
 
 def fetch_all_pdfs(service):
+    """
+    Recursively scans Google Drive including subfolders, shared drives, and shortcuts.
+    """
     all_files = []
     page_token = None
     query = "mimeType='application/pdf' and trashed=false"
 
     while True:
-        response = service.files().list(
-            q=query,
-            fields="nextPageToken, files(id, name)",
-            pageToken=page_token,
-            supportsAllDrives=True,
-            includeItemsFromAllDrives=True
-        ).execute()
-        all_files.extend(response.get("files", []))
-        page_token = response.get("nextPageToken", None)
-        if not page_token:
+        try:
+            response = service.files().list(
+                q=query,
+                fields="nextPageToken, files(id, name)",
+                pageToken=page_token,
+                supportsAllDrives=True,
+                includeItemsFromAllDrives=True,
+                pageSize=1000
+            ).execute()
+            
+            files = response.get("files", [])
+            all_files.extend(files)
+            
+            page_token = response.get("nextPageToken", None)
+            if not page_token:
+                break
+        except Exception as e:
+            print(f"⚠️ Drive API listing warning: {e}")
             break
+
+    print(f"📂 Total PDF files discovered in Google Drive: {len(all_files)}")
     return all_files
 
 
@@ -115,24 +128,36 @@ def extract_and_index_qdrant():
     engine = AIVectorEngine()
     drive_files = fetch_all_pdfs(service)
 
+    # Fetch indexed catalogs from Qdrant and normalize names (lowercase & handled spaces)
     scroll_res, _ = engine.client.scroll(
         collection_name=COLLECTION_NAME,
         limit=10000,
         with_payload=["catalog"],
         with_vectors=False
     )
-    indexed_catalogs = set(point.payload.get("catalog") for point in scroll_res if point.payload)
+    
+    indexed_catalogs = set()
+    for point in scroll_res:
+        if point.payload and "catalog" in point.payload:
+            cat = point.payload["catalog"]
+            indexed_catalogs.add(cat.lower().strip())
+            indexed_catalogs.add(cat.replace(" ", "_").lower().strip())
 
-    new_drive_files = [
-        f for f in drive_files 
-        if f["name"] not in indexed_catalogs and f["name"].replace(" ", "_") not in indexed_catalogs
-    ]
+    # Safely identify unindexed files
+    new_drive_files = []
+    for f in drive_files:
+        raw_name = f["name"]
+        norm_name = raw_name.replace(" ", "_").lower().strip()
+        clean_name = raw_name.lower().strip()
+        
+        if norm_name not in indexed_catalogs and clean_name not in indexed_catalogs:
+            new_drive_files.append(f)
 
     if not new_drive_files:
         print("✅ All catalogs up to date in Qdrant Cloud!")
         return True
 
-    print(f"🚀 Processing {len(new_drive_files)} NEW catalog(s) with Patch-Level Indexing...")
+    print(f"🚀 Found {len(new_drive_files)} NEW catalog(s) to index out of {len(drive_files)} total files.")
 
     for f in new_drive_files:
         pdf_filename = f["name"].replace(" ", "_")
@@ -140,12 +165,16 @@ def extract_and_index_qdrant():
         brand = extract_brand_name(pdf_filename)
 
         print(f"⬇️ Downloading '{pdf_filename}'...")
-        request = service.files().get_media(fileId=f["id"])
-        with open(local_pdf_path, "wb") as fh:
-            downloader = MediaIoBaseDownload(fh, request)
-            done = False
-            while not done:
-                _, done = downloader.next_chunk()
+        try:
+            request = service.files().get_media(fileId=f["id"])
+            with open(local_pdf_path, "wb") as fh:
+                downloader = MediaIoBaseDownload(fh, request)
+                done = False
+                while not done:
+                    _, done = downloader.next_chunk()
+        except Exception as dl_err:
+            print(f"❌ Download failed for '{pdf_filename}': {dl_err}")
+            continue
 
         try:
             doc = fitz.open(local_pdf_path)
