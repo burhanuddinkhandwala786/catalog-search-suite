@@ -91,7 +91,7 @@ class AIVectorEngine:
             points=points
         )
 
-    def search(self, query_vector: list, top_k: int = 25, min_confidence: float = 0.40, brand_filter: str = None, keyword_filter: str = None) -> list:
+    def search(self, query_vector: list, top_k: int = 25, min_confidence: float = 0.40, brand_filter: str = None, keyword_filter: str = None, **kwargs) -> list:
         """Native Hybrid Search combining Visual Vector Distance + Qdrant Payload Filter."""
         matches = []
         points = []
