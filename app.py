@@ -25,7 +25,7 @@ st.set_page_config(
 def st_session_state_wrapper():
     return st.session_state
 
-# --- RESPONSIVE ENTERPRISE UI STYLING ---
+# --- RESPONSIVE & HIGH-PERFORMANCE UI STYLING ---
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap');
@@ -42,19 +42,19 @@ st.markdown("""
 
     /* Fluid Container for Mobile, Tablet & Desktop */
     .block-container { 
-        padding-top: 1rem !important; 
+        padding-top: 0.8rem !important; 
         padding-bottom: 2rem !important; 
-        padding-left: 1rem !important;
-        padding-right: 1rem !important;
-        max-width: 1050px !important; 
+        padding-left: 0.8rem !important;
+        padding-right: 0.8rem !important;
+        max-width: 900px !important; 
     }
 
     /* Header Styling */
     .app-header {
         text-align: center;
-        padding: 10px 0 15px 0;
+        padding: 5px 0 10px 0;
         border-bottom: 1px solid #f1f5f9;
-        margin-bottom: 15px;
+        margin-bottom: 12px;
     }
     .app-header-subtitle {
         color: #b8976c;
@@ -62,11 +62,11 @@ st.markdown("""
         font-weight: 700;
         letter-spacing: 0.15em;
         text-transform: uppercase;
-        margin-bottom: 4px;
+        margin-bottom: 2px;
     }
     .app-header-title {
         color: #0f172a;
-        font-size: clamp(1.2rem, 4vw, 1.6rem);
+        font-size: clamp(1.2rem, 4vw, 1.5rem);
         font-weight: 700;
         letter-spacing: -0.02em;
         margin: 0;
@@ -89,20 +89,28 @@ st.markdown("""
         width: 100% !important;
     }
 
+    /* Prevent Cropper Canvas Bleed & Allow Touch Overflow */
+    canvas, .stCropper {
+        max-width: 100% !important;
+        height: auto !important;
+        border-radius: 8px !important;
+        overflow: hidden !important;
+    }
+
     /* Responsive Match Containers */
     .match-container-exact {
         background: #fcfbf9;
         border: 1px solid #e2d9cd;
         border-radius: 12px;
-        padding: 15px;
-        margin-bottom: 15px;
+        padding: 12px;
+        margin-bottom: 12px;
     }
     .match-container-alt {
         background: #f8fafc;
         border: 1px solid #e2e8f0;
         border-radius: 12px;
-        padding: 15px;
-        margin-bottom: 15px;
+        padding: 12px;
+        margin-bottom: 12px;
     }
     .match-header-tag {
         display: inline-flex;
@@ -114,7 +122,7 @@ st.markdown("""
         font-weight: 700;
         letter-spacing: 0.04em;
         text-transform: uppercase;
-        margin-bottom: 10px;
+        margin-bottom: 8px;
     }
     .tag-exact {
         background-color: #f0fdf4;
@@ -127,20 +135,19 @@ st.markdown("""
         border: 1px solid #bae6fd;
     }
 
-    /* Auto-wrapping metadata grid for mobile displays */
     .meta-details-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-        gap: 10px;
-        margin-top: 10px;
-        margin-bottom: 10px;
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+        gap: 8px;
+        margin-top: 8px;
+        margin-bottom: 8px;
     }
     .meta-item-box {
         background: #ffffff;
         border: 1px solid #e2e8f0;
         border-radius: 8px;
-        padding: 8px 12px;
-        font-size: 0.82rem;
+        padding: 6px 10px;
+        font-size: 0.8rem;
         color: #475569;
         word-break: break-word;
     }
@@ -150,19 +157,32 @@ st.markdown("""
 
     @media (max-width: 640px) {
         .block-container {
-            padding-top: 0.5rem !important;
-        }
-        .match-container-exact, .match-container-alt {
-            padding: 12px;
+            padding-top: 0.4rem !important;
+            padding-left: 0.5rem !important;
+            padding-right: 0.5rem !important;
         }
     }
 </style>
 """, unsafe_allow_html=True)
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def fetch_pdf_bytes_cached(file_id):
-    return fetch_pdf_bytes_from_drive(file_id)
+@st.cache_data(ttl=86400, show_spinner=False)
+def fetch_pdf_page_image_cached(file_id, page_num):
+    """Downloads & converts PDF page to compressed JPEG with 24h cache for fast loading."""
+    pdf_bytes = fetch_pdf_bytes_from_drive(file_id)
+    if pdf_bytes:
+        try:
+            doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+            page = doc[page_num - 1]
+            pix = page.get_pixmap(dpi=100)
+            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+            
+            img_byte_arr = io.BytesIO()
+            img.save(img_byte_arr, format='JPEG', quality=80)
+            return img_byte_arr.getvalue()
+        except Exception:
+            pass
+    return None
 
 
 def render_match_image(meta_dict):
@@ -178,32 +198,57 @@ def render_match_image(meta_dict):
         return
 
     if "file_id" in meta_dict and meta_dict["file_id"]:
-        pdf_bytes = fetch_pdf_bytes_cached(meta_dict["file_id"])
-        if pdf_bytes:
-            try:
-                page_num = meta_dict.get("page", 1) - 1
-                doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-                page = doc[page_num]
-                
-                # Render pixmap cleanly into native PIL container
-                pix = page.get_pixmap(dpi=110)
-                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-                
-                st.image(img, use_container_width=True)
-                return
-            except Exception:
-                pass
+        img_bytes = fetch_pdf_page_image_cached(meta_dict["file_id"], meta_dict.get("page", 1))
+        if img_bytes:
+            st.image(img_bytes, use_container_width=True)
+            return
 
     st.info(f"📍 **Match Reference:** {meta_dict.get('catalog', '')} — **Page {meta_dict.get('page', 1)}**")
 
 
-@st.cache_resource(show_spinner="Connecting to Visual Search Engine...")
+@st.cache_resource(show_spinner=False)
 def load_engine():
     try:
         return AIVectorEngine()
     except Exception as e:
         st.error(f"Engine connection failed: {e}")
         return None
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_cached_brands(_engine):
+    try:
+        return _engine.get_all_brands()
+    except Exception:
+        return []
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def get_tab2_metrics(_engine):
+    """Caches database count queries so app startup remains fast."""
+    try:
+        col_info = _engine.client.get_collection(COLLECTION_NAME)
+        total_vectors = col_info.points_count
+        
+        scroll_res, _ = _engine.client.scroll(
+            collection_name=COLLECTION_NAME,
+            limit=10000,
+            with_payload=["company", "catalog"],
+            with_vectors=False
+        )
+        
+        all_brands = set()
+        all_catalogs = set()
+        for point in scroll_res:
+            if point.payload:
+                if "company" in point.payload:
+                    all_brands.add(point.payload["company"])
+                if "catalog" in point.payload:
+                    all_catalogs.add(point.payload["catalog"])
+
+        return len(all_catalogs), len(all_brands), total_vectors, sorted(list(all_catalogs))
+    except Exception:
+        return 0, 0, 0, []
 
 
 engine = load_engine()
@@ -219,16 +264,12 @@ tab1, tab2 = st.tabs(["🔍 Visual Pattern Search", "⚙️ Index Management"])
 
 with tab1:
     if engine is not None:
-        try:
-            companies = engine.get_all_brands()
-        except Exception:
-            companies = []
-            
-        companies.insert(0, "All Brand Libraries")
+        companies = get_cached_brands(engine)
+        companies_list = ["All Brand Libraries"] + companies
         
         col_filter, col_search_kw, col_sync = st.columns([2.5, 2, 1], vertical_alignment="bottom")
         with col_filter:
-            selected_company = st.selectbox("Select Brand Collection:", companies)
+            selected_company = st.selectbox("Select Brand Collection:", companies_list)
         with col_search_kw:
             catalog_keyword = st.text_input("Filter Catalog Name (Optional):", placeholder="e.g. Marbelo, Louvers")
         with col_sync:
@@ -245,6 +286,7 @@ with tab1:
                         res = requests.post(url, json={"event_type": "drive-updated"}, headers=headers)
                         if res.status_code == 204:
                             st.cache_resource.clear()
+                            st.cache_data.clear()
                             st.success("Sync triggered!")
                         else:
                             st.error(f"Failed: {res.status_code}")
@@ -262,43 +304,40 @@ with tab1:
         search_file = st.file_uploader("Upload or Capture Reference Image", type=["jpg", "png", "jpeg"])
         
         if search_file:
-            # 1. Open image and apply EXIF orientation auto-transpose (fixes phone photo rotation/zooming)
             raw_pil_img = Image.open(io.BytesIO(search_file.getvalue())).convert("RGB")
             raw_pil_img = ImageOps.exif_transpose(raw_pil_img)
             
-            # 2. Resize display image proportionally so it fits viewports without blocking scroll
-            max_display_size = (600, 500)
+            # Constrain preview dimension
             display_img = raw_pil_img.copy()
-            display_img.thumbnail(max_display_size, Image.Resampling.LANCZOS)
+            display_img.thumbnail((350, 320), Image.Resampling.LANCZOS)
             
-            st.markdown("<p style='font-weight:600; color:#334155; font-size:0.88rem; margin-top:16px;'>1. Adjust Crop Area over Pattern / Product:</p>", unsafe_allow_html=True)
+            st.markdown("<p style='font-weight:600; color:#334155; font-size:0.85rem; margin-top:8px; margin-bottom:4px;'>1. Adjust Crop Area over Pattern / Product:</p>", unsafe_allow_html=True)
             
-            # 3. Pass constrained image to st_cropper
-            cropped_img = st_cropper(
-                display_img, 
-                realtime_update=True, 
-                box_color='#b8976c', 
-                aspect_ratio=None,
-                return_type='image'
-            )
+            # Center cropper in constrained columns to allow touch-scroll margins on mobile
+            crop_col1, crop_col2, crop_col3 = st.columns([1, 4, 1])
+            with crop_col2:
+                cropped_img = st_cropper(
+                    display_img, 
+                    realtime_update=False, 
+                    box_color='#b8976c', 
+                    aspect_ratio=None,
+                    return_type='image'
+                )
             
-            st.markdown("<br>", unsafe_allow_html=True)
             trigger_search = st.button("🔍 Search Cropped Pattern", type="primary", use_container_width=True)
             
             if trigger_search or "last_search_executed" in st_session_state_wrapper():
                 st_session_state_wrapper()["last_search_executed"] = True
                 
-                # Upsample small crops for high-precision shape & texture detail
                 if cropped_img.width < 224 or cropped_img.height < 224:
                     proc_img = cropped_img.resize((448, 448), Image.Resampling.BICUBIC)
                 else:
                     proc_img = cropped_img
 
-                with st.spinner("Searching neural database for visual matches..."):
+                with st.spinner("Searching neural database..."):
                     query_vector = engine.get_single_embedding(proc_img)
                     confidence_threshold = min_confidence_slider / 100.0
                     
-                    # Safe invocation wrapper to prevent TypeError crashes
                     try:
                         matches = engine.search(
                             query_vector=query_vector, 
@@ -320,7 +359,7 @@ with tab1:
                 st.markdown("<br>", unsafe_allow_html=True)
                 
                 if exact_matches:
-                    st.markdown("<h4 style='color:#0f172a; font-weight:700; font-size:1.1rem;'>🎯 Exact Match Results</h4>", unsafe_allow_html=True)
+                    st.markdown("<h4 style='color:#0f172a; font-weight:700; font-size:1.05rem;'>🎯 Exact Match Results</h4>", unsafe_allow_html=True)
                     for i, res in enumerate(exact_matches[:3]):
                         score_pct = res["score"] * 100
                         st.markdown(f"""
@@ -339,7 +378,7 @@ with tab1:
                         st.divider()
                         
                 elif high_confidence_matches:
-                    st.markdown("<h4 style='color:#0f172a; font-weight:700; font-size:1.1rem;'>🎨 High Confidence Alternatives</h4>", unsafe_allow_html=True)
+                    st.markdown("<h4 style='color:#0f172a; font-weight:700; font-size:1.05rem;'>🎨 High Confidence Alternatives</h4>", unsafe_allow_html=True)
                     for i, res in enumerate(high_confidence_matches[:3]):
                         score_pct = res["score"] * 100
                         st.markdown(f"""
@@ -362,35 +401,8 @@ with tab1:
 with tab2:
     st.markdown("<h4 style='color:#0f172a; font-weight:700; font-size:1.05rem; margin-top:10px;'>⚡ Cloud Index & Fast PDF Lookup</h4>", unsafe_allow_html=True)
     
-    # 1. LIVE DATABASE METRICS DISPLAY
     if engine is not None:
-        try:
-            col_info = engine.client.get_collection(COLLECTION_NAME)
-            total_vectors = col_info.points_count
-            
-            scroll_res, _ = engine.client.scroll(
-                collection_name=COLLECTION_NAME,
-                limit=10000,
-                with_payload=["company", "catalog"],
-                with_vectors=False
-            )
-            
-            all_brands = set()
-            all_catalogs = set()
-            for point in scroll_res:
-                if point.payload:
-                    if "company" in point.payload:
-                        all_brands.add(point.payload["company"])
-                    if "catalog" in point.payload:
-                        all_catalogs.add(point.payload["catalog"])
-
-            total_brands = len(all_brands)
-            total_catalogs = len(all_catalogs)
-
-        except Exception:
-            total_vectors = 0
-            total_brands = 0
-            total_catalogs = 0
+        total_catalogs, total_brands, total_vectors, catalog_list = get_tab2_metrics(engine)
 
         m_col1, m_col2, m_col3 = st.columns(3)
         with m_col1:
@@ -402,7 +414,6 @@ with tab2:
             
     st.divider()
 
-    # 2. QUICK KEYWORD CATALOG SEARCH
     st.markdown("##### 🔎 Quick Catalog Keyword Search")
     quick_kw = st.text_input("Search catalog name or brand directly:", placeholder="e.g. Louvers, Marbelo, Euro Pratik", key="quick_search_kw")
     
@@ -424,20 +435,18 @@ with tab2:
             else:
                 st.info(f"No catalog names matching '{quick_kw}' found in current index.")
 
-    # 3. EXPANDABLE LIST OF ALL INDEXED CATALOGS
-    if 'all_catalogs' in locals() and all_catalogs:
-        with st.expander(f"📄 View All {len(all_catalogs)} Currently Indexed PDF Files"):
-            for idx, cat_name in enumerate(sorted(list(all_catalogs)), 1):
+    if 'catalog_list' in locals() and catalog_list:
+        with st.expander(f"📄 View All {len(catalog_list)} Currently Indexed PDF Files"):
+            for idx, cat_name in enumerate(catalog_list, 1):
                 st.write(f"{idx}. {cat_name}")
 
     st.divider()
 
-    # 4. GOOGLE DRIVE AUTO-SYNC TRIGGER VIA GITHUB ACTIONS DISPATCH
     st.markdown("##### 🔄 Sync Google Drive Catalogs")
     if st.button("🚀 Trigger Cloud PDF Indexing", type="primary", use_container_width=True):
         gh_token = st.secrets.get("GITHUB_TOKEN")
         if not gh_token:
-            st.error("❌ Missing `GITHUB_TOKEN` in Streamlit secrets. Please add it to enable cloud sync dispatch.")
+            st.error("❌ Missing `GITHUB_TOKEN` in Streamlit secrets.")
         else:
             with st.spinner("Triggering GitHub Actions cloud indexing server..."):
                 url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/dispatches"
@@ -449,6 +458,6 @@ with tab2:
                 res = requests.post(url, json={"event_type": "drive-updated"}, headers=headers)
                 
                 if res.status_code == 204:
-                    st.success("✅ Sync successfully triggered on GitHub Actions! Your catalogs will update in the background within 1–2 minutes.")
+                    st.success("✅ Sync successfully triggered on GitHub Actions!")
                 else:
-                    st.error(f"❌ Failed to trigger GitHub workflow. Status code: {res.status_code}")
+                    st.error(f"❌ Failed to trigger GitHub workflow: {res.status_code}")
