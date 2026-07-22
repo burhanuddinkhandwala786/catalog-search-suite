@@ -40,13 +40,13 @@ st.markdown("""
         display: none !important; 
     }
 
-    /* Fluid Container for Mobile, Tablet & Desktop */
+    /* Fluid Container */
     .block-container { 
         padding-top: 0.8rem !important; 
         padding-bottom: 2rem !important; 
         padding-left: 0.8rem !important;
         padding-right: 0.8rem !important;
-        max-width: 900px !important; 
+        max-width: 950px !important; 
     }
 
     /* Header Styling */
@@ -89,15 +89,16 @@ st.markdown("""
         width: 100% !important;
     }
 
-    /* Prevent Cropper Canvas Bleed & Allow Touch Overflow */
+    /* Full Width Cropper Canvas with Mobile Touch Scroll Enablement */
     canvas, .stCropper {
+        width: 100% !important;
         max-width: 100% !important;
         height: auto !important;
         border-radius: 8px !important;
-        overflow: hidden !important;
+        touch-action: pan-y !important;
     }
 
-    /* Responsive Match Containers */
+    /* Match Results Containers */
     .match-container-exact {
         background: #fcfbf9;
         border: 1px solid #e2d9cd;
@@ -304,33 +305,31 @@ with tab1:
         search_file = st.file_uploader("Upload or Capture Reference Image", type=["jpg", "png", "jpeg"])
         
         if search_file:
-            # 1. Full-Resolution Original (Preserves 100% Quality for DINOv2)
+            # 1. Full-Resolution Original Image (Preserved for 100% Quality Feature Extraction)
             raw_pil_img = Image.open(io.BytesIO(search_file.getvalue())).convert("RGB")
             raw_pil_img = ImageOps.exif_transpose(raw_pil_img)
             
-            # 2. Visually Scaled UI Preview (Prevents Phone Screen Lock)
+            # 2. Comfortable Display Preview (Generous Max Width)
             preview_img = raw_pil_img.copy()
-            preview_img.thumbnail((450, 400), Image.Resampling.LANCZOS)
+            preview_img.thumbnail((900, 800), Image.Resampling.LANCZOS)
             
             st.markdown("<p style='font-weight:600; color:#334155; font-size:0.85rem; margin-top:8px; margin-bottom:4px;'>1. Adjust Crop Area over Pattern / Product:</p>", unsafe_allow_html=True)
             
-            crop_col1, crop_col2, crop_col3 = st.columns([1, 6, 1])
-            with crop_col2:
-                # Returns bounding box coordinates [left, top, right, bottom]
-                crop_box = st_cropper(
-                    preview_img, 
-                    realtime_update=True, 
-                    box_color='#b8976c', 
-                    aspect_ratio=None,
-                    return_type='box'
-                )
+            # Render cropper across full available container width
+            crop_box = st_cropper(
+                preview_img, 
+                realtime_update=True, 
+                box_color='#b8976c', 
+                aspect_ratio=None,
+                return_type='box'
+            )
             
             trigger_search = st.button("🔍 Search Cropped Pattern", type="primary", use_container_width=True)
             
             if trigger_search or "last_search_executed" in st_session_state_wrapper():
                 st_session_state_wrapper()["last_search_executed"] = True
                 
-                # 3. Translate UI Box Coordinates back to 100% Full-Resolution Image
+                # 3. Translate UI Box Coordinates to 100% Full-Resolution Image
                 orig_w, orig_h = raw_pil_img.size
                 prev_w, prev_h = preview_img.size
                 
@@ -343,7 +342,6 @@ with tab1:
                     right = int((crop_box['left'] + crop_box['width']) * scale_x)
                     bottom = int((crop_box['top'] + crop_box['height']) * scale_y)
                     
-                    # Ensure valid boundaries
                     left, top = max(0, left), max(0, top)
                     right, bottom = min(orig_w, right), min(orig_h, bottom)
                     
@@ -354,7 +352,7 @@ with tab1:
                 else:
                     high_res_crop = raw_pil_img
 
-                # Upsample tiny crops for optimal neural vector extraction
+                # Upsample small crops for optimal neural vector extraction
                 if high_res_crop.width < 224 or high_res_crop.height < 224:
                     proc_img = high_res_crop.resize((448, 448), Image.Resampling.BICUBIC)
                 else:
