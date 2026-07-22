@@ -1,6 +1,6 @@
 import streamlit as st
 import fitz  # PyMuPDF
-from PIL import Image
+from PIL import Image, ImageOps
 from streamlit_cropper import st_cropper
 import io
 import os
@@ -262,12 +262,20 @@ with tab1:
         search_file = st.file_uploader("Upload or Capture Reference Image", type=["jpg", "png", "jpeg"])
         
         if search_file:
+            # 1. Open image and apply EXIF orientation auto-transpose (fixes phone photo rotation/zooming)
             raw_pil_img = Image.open(io.BytesIO(search_file.getvalue())).convert("RGB")
+            raw_pil_img = ImageOps.exif_transpose(raw_pil_img)
+            
+            # 2. Resize display image proportionally so it fits viewports without blocking scroll
+            max_display_size = (600, 500)
+            display_img = raw_pil_img.copy()
+            display_img.thumbnail(max_display_size, Image.Resampling.LANCZOS)
             
             st.markdown("<p style='font-weight:600; color:#334155; font-size:0.88rem; margin-top:16px;'>1. Adjust Crop Area over Pattern / Product:</p>", unsafe_allow_html=True)
             
+            # 3. Pass constrained image to st_cropper
             cropped_img = st_cropper(
-                raw_pil_img, 
+                display_img, 
                 realtime_update=True, 
                 box_color='#b8976c', 
                 aspect_ratio=None,
