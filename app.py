@@ -251,6 +251,22 @@ def get_tab2_metrics(_engine):
         return 0, 0, 0, []
 
 
+def pad_image_if_wide(pil_img, target_ratio=1.33):
+    """
+    Pads wide images vertically so they fit inside mobile phone viewports without horizontal clipping.
+    """
+    w, h = pil_img.size
+    current_ratio = w / float(h)
+    
+    if current_ratio > target_ratio:
+        new_h = int(w / target_ratio)
+        pad_top = (new_h - h) // 2
+        padded_img = Image.new("RGB", (w, new_h), (245, 247, 250))
+        padded_img.paste(pil_img, (0, pad_top))
+        return padded_img, pad_top, w, new_h
+    return pil_img, 0, w, h
+
+
 engine = load_engine()
 
 st.markdown("""
@@ -307,11 +323,22 @@ with tab1:
             raw_pil_img = Image.open(io.BytesIO(search_file.getvalue())).convert("RGB")
             raw_pil_img = ImageOps.exif_transpose(raw_pil_img)
             
-            preview_img = raw_pil_img.copy()
-            preview_img.thumbnail((900, 800), Image.Resampling.LANCZOS)
+            # Mode toggle: Crop region vs Search full image
+            search_mode = st.radio(
+                "Select Search Mode:", 
+                ["✂️ Custom Crop Pattern", "🖼️ Search Full Image Directly"], 
+                horizontal=True
+            )
             
-            # Wrap cropper in expander container to isolate touch events & prevent mobile scroll trap
-            with st.expander("✂️ Adjust Crop Area over Pattern / Product", expanded=True):
+            high_res_crop = raw_pil_img
+            
+            if search_mode == "✂️ Custom Crop Pattern":
+                # Pad wide images so 100% of the image (both sides) is visible on phones
+                padded_raw, pad_top, pad_w, pad_h = pad_image_if_wide(raw_pil_img)
+                
+                preview_img = padded_raw.copy()
+                preview_img.thumbnail((800, 700), Image.Resampling.LANCZOS)
+                
                 crop_box = st_cropper(
                     preview_img, 
                     realtime_update=True, 
@@ -319,34 +346,29 @@ with tab1:
                     aspect_ratio=None,
                     return_type='box'
                 )
-            
+                
+                if crop_box:
+                    scale_x = pad_w / float(preview_img.width) if preview_img.width > 0 else 1.0
+                    scale_y = pad_h / float(preview_img.height) if preview_img.height > 0 else 1.0
+                    
+                    # Convert padded crop box back to raw image space
+                    crop_left = int(crop_box['left'] * scale_x)
+                    crop_top = max(0, int(crop_box['top'] * scale_y) - pad_top)
+                    crop_right = int((crop_box['left'] + crop_box['width']) * scale_x)
+                    crop_bottom = min(raw_pil_img.height, int((crop_box['top'] + crop_box['height']) * scale_y) - pad_top)
+                    
+                    if crop_right > crop_left and crop_bottom > crop_top:
+                        high_res_crop = raw_pil_img.crop((crop_left, crop_top, crop_right, crop_bottom))
+            else:
+                # Direct full image preview (Zero canvas touch traps on mobile)
+                st.image(raw_pil_img, use_container_width=True)
+
             trigger_search = st.button("🔍 Search Cropped Pattern", type="primary", use_container_width=True)
             
             if trigger_search or "last_search_executed" in st_session_state_wrapper():
                 st_session_state_wrapper()["last_search_executed"] = True
                 
-                orig_w, orig_h = raw_pil_img.size
-                prev_w, prev_h = preview_img.size
-                
-                scale_x = orig_w / float(prev_w) if prev_w > 0 else 1.0
-                scale_y = orig_h / float(prev_h) if prev_h > 0 else 1.0
-                
-                if crop_box:
-                    left = int(crop_box['left'] * scale_x)
-                    top = int(crop_box['top'] * scale_y)
-                    right = int((crop_box['left'] + crop_box['width']) * scale_x)
-                    bottom = int((crop_box['top'] + crop_box['height']) * scale_y)
-                    
-                    left, top = max(0, left), max(0, top)
-                    right, bottom = min(orig_w, right), min(orig_h, bottom)
-                    
-                    if right > left and bottom > top:
-                        high_res_crop = raw_pil_img.crop((left, top, right, bottom))
-                    else:
-                        high_res_crop = raw_pil_img
-                else:
-                    high_res_crop = raw_pil_img
-
+                # Upsample small crops for optimal neural vector extraction
                 if high_res_crop.width < 224 or high_res_crop.height < 224:
                     proc_img = high_res_crop.resize((448, 448), Image.Resampling.BICUBIC)
                 else:
@@ -449,7 +471,7 @@ with tab2:
                 st.success(f"Found {len(scroll_res)} catalog reference matches for '{quick_kw}':")
                 for point in scroll_res:
                     meta = point.payload
-                    st.markdown(f"📖 **Catalog:** `{meta.get('catalog')}` | 🏢 **Brand:** `{meta.get('company')}` | 📄 **Page:** {meta.get('page')}")
+                    st.markdown(f"📖 **Catalog:** `{meta.get('catalog')}` | 🏢 **Brand:** `{meta.get('company')}` | 📄 **Page:** {meta.get('page')}`)
             else:
                 st.info(f"No catalog names matching '{quick_kw}' found in current index.")
 
