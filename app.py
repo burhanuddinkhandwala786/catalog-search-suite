@@ -40,13 +40,13 @@ st.markdown("""
         display: none !important; 
     }
 
-    /* Fluid Container */
+    /* Fluid App Container */
     .block-container { 
         padding-top: 0.8rem !important; 
         padding-bottom: 2rem !important; 
         padding-left: 0.8rem !important;
         padding-right: 0.8rem !important;
-        max-width: 950px !important; 
+        max-width: 900px !important; 
     }
 
     /* Header Styling */
@@ -89,9 +89,8 @@ st.markdown("""
         width: 100% !important;
     }
 
-    /* Full Width Cropper Canvas */
+    /* Cropper Canvas Container Bounds */
     canvas, .stCropper {
-        width: 100% !important;
         max-width: 100% !important;
         height: auto !important;
         border-radius: 8px !important;
@@ -158,8 +157,8 @@ st.markdown("""
     @media (max-width: 640px) {
         .block-container {
             padding-top: 0.4rem !important;
-            padding-left: 0.5rem !important;
-            padding-right: 0.5rem !important;
+            padding-left: 0.4rem !important;
+            padding-right: 0.4rem !important;
         }
     }
 </style>
@@ -253,22 +252,6 @@ def get_tab2_metrics(_engine):
         return 0, 0, 0, []
 
 
-def pad_image_if_wide(pil_img, target_ratio=1.33):
-    """
-    Pads wide images vertically so they fit inside mobile phone viewports without horizontal clipping.
-    """
-    w, h = pil_img.size
-    current_ratio = w / float(h)
-    
-    if current_ratio > target_ratio:
-        new_h = int(w / target_ratio)
-        pad_top = (new_h - h) // 2
-        padded_img = Image.new("RGB", (w, new_h), (245, 247, 250))
-        padded_img.paste(pil_img, (0, pad_top))
-        return padded_img, pad_top, w, new_h
-    return pil_img, 0, w, h
-
-
 engine = load_engine()
 
 st.markdown("""
@@ -322,25 +305,19 @@ with tab1:
         search_file = st.file_uploader("Upload or Capture Reference Image", type=["jpg", "png", "jpeg"])
         
         if search_file:
+            # 1. Full-Resolution Original Image (Preserved for 100% Quality Feature Extraction)
             raw_pil_img = Image.open(io.BytesIO(search_file.getvalue())).convert("RGB")
             raw_pil_img = ImageOps.exif_transpose(raw_pil_img)
             
-            # Mode toggle: Crop region vs Search full image
-            search_mode = st.radio(
-                "Select Search Mode:", 
-                ["✂️ Custom Crop Pattern", "🖼️ Search Full Image Directly"], 
-                horizontal=True
-            )
+            # 2. Proportionally scaled UI Preview (Max 600x400 fits phone viewports with zero image cut-off)
+            preview_img = raw_pil_img.copy()
+            preview_img.thumbnail((600, 400), Image.Resampling.LANCZOS)
             
-            high_res_crop = raw_pil_img
+            st.markdown("<p style='font-weight:600; color:#334155; font-size:0.85rem; margin-top:8px; margin-bottom:4px;'>1. Adjust Crop Area over Pattern / Product:</p>", unsafe_allow_html=True)
             
-            if search_mode == "✂️ Custom Crop Pattern":
-                # Pad wide images so 100% of the image (both sides) is visible on phones
-                padded_raw, pad_top, pad_w, pad_h = pad_image_if_wide(raw_pil_img)
-                
-                preview_img = padded_raw.copy()
-                preview_img.thumbnail((800, 700), Image.Resampling.LANCZOS)
-                
+            # Render cropper inside bounded columns to leave touch-scroll gutters on mobile phone edges
+            crop_col1, crop_col2, crop_col3 = st.columns([0.3, 9.4, 0.3])
+            with crop_col2:
                 crop_box = st_cropper(
                     preview_img, 
                     realtime_update=True, 
@@ -348,28 +325,35 @@ with tab1:
                     aspect_ratio=None,
                     return_type='box'
                 )
-                
-                if crop_box:
-                    scale_x = pad_w / float(preview_img.width) if preview_img.width > 0 else 1.0
-                    scale_y = pad_h / float(preview_img.height) if preview_img.height > 0 else 1.0
-                    
-                    # Convert padded crop box back to raw image space
-                    crop_left = int(crop_box['left'] * scale_x)
-                    crop_top = max(0, int(crop_box['top'] * scale_y) - pad_top)
-                    crop_right = int((crop_box['left'] + crop_box['width']) * scale_x)
-                    crop_bottom = min(raw_pil_img.height, int((crop_box['top'] + crop_box['height']) * scale_y) - pad_top)
-                    
-                    if crop_right > crop_left and crop_bottom > crop_top:
-                        high_res_crop = raw_pil_img.crop((crop_left, crop_top, crop_right, crop_bottom))
-            else:
-                # Direct full image preview
-                st.image(raw_pil_img, use_container_width=True)
-
+            
             trigger_search = st.button("🔍 Search Cropped Pattern", type="primary", use_container_width=True)
             
             if trigger_search or "last_search_executed" in st_session_state_wrapper():
                 st_session_state_wrapper()["last_search_executed"] = True
                 
+                # 3. Translate UI Box Coordinates to Original High-Res Image Space
+                orig_w, orig_h = raw_pil_img.size
+                prev_w, prev_h = preview_img.size
+                
+                scale_x = orig_w / float(prev_w) if prev_w > 0 else 1.0
+                scale_y = orig_h / float(prev_h) if prev_h > 0 else 1.0
+                
+                if crop_box:
+                    left = int(crop_box['left'] * scale_x)
+                    top = int(crop_box['top'] * scale_y)
+                    right = int((crop_box['left'] + crop_box['width']) * scale_x)
+                    bottom = int((crop_box['top'] + crop_box['height']) * scale_y)
+                    
+                    left, top = max(0, left), max(0, top)
+                    right, bottom = min(orig_w, right), min(orig_h, bottom)
+                    
+                    if right > left and bottom > top:
+                        high_res_crop = raw_pil_img.crop((left, top, right, bottom))
+                    else:
+                        high_res_crop = raw_pil_img
+                else:
+                    high_res_crop = raw_pil_img
+
                 # Upsample small crops for optimal neural vector extraction
                 if high_res_crop.width < 224 or high_res_crop.height < 224:
                     proc_img = high_res_crop.resize((448, 448), Image.Resampling.BICUBIC)
