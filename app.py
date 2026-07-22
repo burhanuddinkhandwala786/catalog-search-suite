@@ -203,7 +203,9 @@ def render_match_image(meta_dict):
             st.image(img_bytes, use_container_width=True)
             return
 
-    st.info(f"📍 **Match Reference:** {meta_dict.get('catalog', '')} — **Page {meta_dict.get('page', 1)}**")
+    cat_title = meta_dict.get('catalog', '')
+    cat_page = meta_dict.get('page', 1)
+    st.info(f"📍 **Match Reference:** {cat_title} — **Page {cat_page}**")
 
 
 @st.cache_resource(show_spinner=False)
@@ -360,7 +362,7 @@ with tab1:
                     if crop_right > crop_left and crop_bottom > crop_top:
                         high_res_crop = raw_pil_img.crop((crop_left, crop_top, crop_right, crop_bottom))
             else:
-                # Direct full image preview (Zero canvas touch traps on mobile)
+                # Direct full image preview
                 st.image(raw_pil_img, use_container_width=True)
 
             trigger_search = st.button("🔍 Search Cropped Pattern", type="primary", use_container_width=True)
@@ -402,15 +404,18 @@ with tab1:
                     st.markdown("<h4 style='color:#0f172a; font-weight:700; font-size:1.05rem;'>🎯 Exact Match Results</h4>", unsafe_allow_html=True)
                     for i, res in enumerate(exact_matches[:3]):
                         score_pct = res["score"] * 100
+                        b_name = res['meta'].get('company', 'General')
+                        c_name = res['meta'].get('catalog', 'N/A')
+                        p_num = res['meta'].get('page', 1)
                         st.markdown(f"""
                         <div class="match-container-exact">
                             <div class="match-header-tag tag-exact">
                                 <span>Direct Match #{i+1}</span> • <span>{score_pct:.1f}% Confidence</span>
                             </div>
                             <div class="meta-details-grid">
-                                <div class="meta-item-box">🏢 <strong>Brand:</strong> {res['meta'].get('company', 'General')}</div>
-                                <div class="meta-item-box">📖 <strong>Catalog:</strong> {res['meta'].get('catalog', 'N/A')}</div>
-                                <div class="meta-item-box">📄 <strong>Location:</strong> Page {res['meta'].get('page', 1)}</div>
+                                <div class="meta-item-box">🏢 <strong>Brand:</strong> {b_name}</div>
+                                <div class="meta-item-box">📖 <strong>Catalog:</strong> {c_name}</div>
+                                <div class="meta-item-box">📄 <strong>Location:</strong> Page {p_num}</div>
                             </div>
                         </div>
                         """, unsafe_allow_html=True)
@@ -421,15 +426,18 @@ with tab1:
                     st.markdown("<h4 style='color:#0f172a; font-weight:700; font-size:1.05rem;'>🎨 High Confidence Alternatives</h4>", unsafe_allow_html=True)
                     for i, res in enumerate(high_confidence_matches[:3]):
                         score_pct = res["score"] * 100
+                        b_name = res['meta'].get('company', 'General')
+                        c_name = res['meta'].get('catalog', 'N/A')
+                        p_num = res['meta'].get('page', 1)
                         st.markdown(f"""
                         <div class="match-container-alt">
                             <div class="match-header-tag tag-alt">
                                 <span>Candidate #{i+1}</span> • <span>{score_pct:.1f}% Visual Similarity</span>
                             </div>
                             <div class="meta-details-grid">
-                                <div class="meta-item-box">🏢 <strong>Brand:</strong> {res['meta'].get('company', 'General')}</div>
-                                <div class="meta-item-box">📖 <strong>Catalog:</strong> {res['meta'].get('catalog', 'N/A')}</div>
-                                <div class="meta-item-box">📄 <strong>Location:</strong> Page {res['meta'].get('page', 1)}</div>
+                                <div class="meta-item-box">🏢 <strong>Brand:</strong> {b_name}</div>
+                                <div class="meta-item-box">📖 <strong>Catalog:</strong> {c_name}</div>
+                                <div class="meta-item-box">📄 <strong>Location:</strong> Page {p_num}</div>
                             </div>
                         </div>
                         """, unsafe_allow_html=True)
@@ -471,7 +479,10 @@ with tab2:
                 st.success(f"Found {len(scroll_res)} catalog reference matches for '{quick_kw}':")
                 for point in scroll_res:
                     meta = point.payload
-                    st.markdown(f"📖 **Catalog:** `{meta.get('catalog')}` | 🏢 **Brand:** `{meta.get('company')}` | 📄 **Page:** {meta.get('page')}`)
+                    c_title = meta.get('catalog', '')
+                    b_title = meta.get('company', '')
+                    p_no = meta.get('page', 1)
+                    st.write(f"📖 Catalog: {c_title} | 🏢 Brand: {b_title} | 📄 Page: {p_no}")
             else:
                 st.info(f"No catalog names matching '{quick_kw}' found in current index.")
 
