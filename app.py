@@ -89,13 +89,12 @@ st.markdown("""
         width: 100% !important;
     }
 
-    /* Full Width Cropper Canvas with Mobile Touch Scroll Enablement */
+    /* Full Width Cropper Canvas */
     canvas, .stCropper {
         width: 100% !important;
         max-width: 100% !important;
         height: auto !important;
         border-radius: 8px !important;
-        touch-action: pan-y !important;
     }
 
     /* Match Results Containers */
@@ -305,31 +304,27 @@ with tab1:
         search_file = st.file_uploader("Upload or Capture Reference Image", type=["jpg", "png", "jpeg"])
         
         if search_file:
-            # 1. Full-Resolution Original Image (Preserved for 100% Quality Feature Extraction)
             raw_pil_img = Image.open(io.BytesIO(search_file.getvalue())).convert("RGB")
             raw_pil_img = ImageOps.exif_transpose(raw_pil_img)
             
-            # 2. Comfortable Display Preview (Generous Max Width)
             preview_img = raw_pil_img.copy()
             preview_img.thumbnail((900, 800), Image.Resampling.LANCZOS)
             
-            st.markdown("<p style='font-weight:600; color:#334155; font-size:0.85rem; margin-top:8px; margin-bottom:4px;'>1. Adjust Crop Area over Pattern / Product:</p>", unsafe_allow_html=True)
-            
-            # Render cropper across full available container width
-            crop_box = st_cropper(
-                preview_img, 
-                realtime_update=True, 
-                box_color='#b8976c', 
-                aspect_ratio=None,
-                return_type='box'
-            )
+            # Wrap cropper in expander container to isolate touch events & prevent mobile scroll trap
+            with st.expander("✂️ Adjust Crop Area over Pattern / Product", expanded=True):
+                crop_box = st_cropper(
+                    preview_img, 
+                    realtime_update=True, 
+                    box_color='#b8976c', 
+                    aspect_ratio=None,
+                    return_type='box'
+                )
             
             trigger_search = st.button("🔍 Search Cropped Pattern", type="primary", use_container_width=True)
             
             if trigger_search or "last_search_executed" in st_session_state_wrapper():
                 st_session_state_wrapper()["last_search_executed"] = True
                 
-                # 3. Translate UI Box Coordinates to 100% Full-Resolution Image
                 orig_w, orig_h = raw_pil_img.size
                 prev_w, prev_h = preview_img.size
                 
@@ -352,7 +347,6 @@ with tab1:
                 else:
                     high_res_crop = raw_pil_img
 
-                # Upsample small crops for optimal neural vector extraction
                 if high_res_crop.width < 224 or high_res_crop.height < 224:
                     proc_img = high_res_crop.resize((448, 448), Image.Resampling.BICUBIC)
                 else:
