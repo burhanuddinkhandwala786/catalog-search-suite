@@ -252,6 +252,28 @@ def get_tab2_metrics(_engine):
         return 0, 0, 0, []
 
 
+def make_cropper_safe_image(pil_img, target_size=800):
+    """
+    Pads wide or tall images into a square 1:1 container.
+    This prevents react-cropper from clipping horizontal edges on mobile screens.
+    """
+    w, h = pil_img.size
+    max_dim = max(w, h)
+    
+    scale = target_size / float(max_dim)
+    new_w = int(w * scale)
+    new_h = int(h * scale)
+    
+    resized_img = pil_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+    
+    canvas = Image.new("RGB", (target_size, target_size), (248, 250, 252))
+    pad_x = (target_size - new_w) // 2
+    pad_y = (target_size - new_h) // 2
+    canvas.paste(resized_img, (pad_x, pad_y))
+    
+    return canvas, pad_x, pad_y, scale
+
+
 engine = load_engine()
 
 st.markdown("""
@@ -305,50 +327,49 @@ with tab1:
         search_file = st.file_uploader("Upload or Capture Reference Image", type=["jpg", "png", "jpeg"])
         
         if search_file:
-            # 1. Full-Resolution Original Image (Preserved for 100% Quality Feature Extraction)
             raw_pil_img = Image.open(io.BytesIO(search_file.getvalue())).convert("RGB")
             raw_pil_img = ImageOps.exif_transpose(raw_pil_img)
             
-            # 2. Proportionally scaled UI Preview (Max 600x400 fits phone viewports with zero image cut-off)
-            preview_img = raw_pil_img.copy()
-            preview_img.thumbnail((600, 400), Image.Resampling.LANCZOS)
+            # Format image into square container (guarantees 100% horizontal & vertical fit on phones)
+            canvas_img, pad_x, pad_y, scale = make_cropper_safe_image(raw_pil_img, target_size=800)
             
             st.markdown("<p style='font-weight:600; color:#334155; font-size:0.85rem; margin-top:8px; margin-bottom:4px;'>1. Adjust Crop Area over Pattern / Product:</p>", unsafe_allow_html=True)
             
-            # Render cropper inside bounded columns to leave touch-scroll gutters on mobile phone edges
-            crop_col1, crop_col2, crop_col3 = st.columns([0.3, 9.4, 0.3])
-            with crop_col2:
-                crop_box = st_cropper(
-                    preview_img, 
-                    realtime_update=True, 
-                    box_color='#b8976c', 
-                    aspect_ratio=None,
-                    return_type='box'
-                )
+            crop_box = st_cropper(
+                canvas_img, 
+                realtime_update=True, 
+                box_color='#b8976c', 
+                aspect_ratio=None,
+                return_type='box'
+            )
             
             trigger_search = st.button("🔍 Search Cropped Pattern", type="primary", use_container_width=True)
             
             if trigger_search or "last_search_executed" in st_session_state_wrapper():
                 st_session_state_wrapper()["last_search_executed"] = True
                 
-                # 3. Translate UI Box Coordinates to Original High-Res Image Space
                 orig_w, orig_h = raw_pil_img.size
-                prev_w, prev_h = preview_img.size
-                
-                scale_x = orig_w / float(prev_w) if prev_w > 0 else 1.0
-                scale_y = orig_h / float(prev_h) if prev_h > 0 else 1.0
                 
                 if crop_box:
-                    left = int(crop_box['left'] * scale_x)
-                    top = int(crop_box['top'] * scale_y)
-                    right = int((crop_box['left'] + crop_box['width']) * scale_x)
-                    bottom = int((crop_box['top'] + crop_box['height']) * scale_y)
+                    # Reverse map canvas crop box coordinates back to original high-res image
+                    res_left = crop_box['left'] - pad_x
+                    res_top = crop_box['top'] - pad_y
+                    res_w = crop_box['width']
+                    res_h = crop_box['height']
                     
-                    left, top = max(0, left), max(0, top)
-                    right, bottom = min(orig_w, right), min(orig_h, bottom)
+                    orig_left = int(res_left / scale)
+                    orig_top = int(res_top / scale)
+                    orig_right = int((res_left + res_w) / scale)
+                    orig_bottom = int((res_top + res_h) / scale)
                     
-                    if right > left and bottom > top:
-                        high_res_crop = raw_pil_img.crop((left, top, right, bottom))
+                    # Clamp boundaries safely
+                    orig_left = max(0, min(orig_w, orig_left))
+                    orig_top = max(0, min(orig_h, orig_top))
+                    orig_right = max(0, min(orig_w, orig_right))
+                    orig_bottom = max(0, min(orig_h, orig_bottom))
+                    
+                    if orig_right > orig_left and orig_bottom > orig_top:
+                        high_res_crop = raw_pil_img.crop((orig_left, orig_top, orig_right, orig_bottom))
                     else:
                         high_res_crop = raw_pil_img
                 else:
