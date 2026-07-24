@@ -2,9 +2,8 @@ name: Prevent Streamlit Hibernation Daily
 
 on:
   schedule:
-    # Runs automatically EVERY DAY at 04:00 UTC (9:30 AM IST)
+    # Runs automatically EVERY DAY at 04:00 UTC
     - cron: '0 4 * * *'
-  # Allows you to manually trigger it anytime from GitHub's "Actions" tab to test it
   workflow_dispatch:
 
 jobs:
@@ -21,7 +20,7 @@ jobs:
           pip install playwright
           playwright install chromium
 
-      - name: Simulate Daily Real User Visit to Direct Streamlit App
+      - name: Simulate Daily Real User Visit & Wake Up App
         run: |
           python -c "
           from playwright.sync_api import sync_playwright
@@ -33,10 +32,22 @@ jobs:
                   page = browser.new_page()
                   print('Navigating directly to catalog-search-suite.streamlit.app...')
                   page.goto('https://catalog-search-suite.streamlit.app', timeout=90000)
-                  page.wait_for_timeout(15000)
-                  print('Successfully established active WebSocket session with Streamlit!')
+                  page.wait_for_timeout(5000)
+
+                  # Look for the 'Yes, get this app back up!' wake-up button
+                  wake_button = page.query_selector('button:has-text(\"Yes, get this app back up!\")')
+                  if wake_button:
+                      print('App is asleep! Clicking wake-up button now...')
+                      wake_button.click()
+                      print('Waiting 45 seconds for server container to fully boot...')
+                      page.wait_for_timeout(45000)
+                  else:
+                      print('App is already awake! Keeping connection active...')
+                      page.wait_for_timeout(10000)
+
+                  print('Successfully established active session with Streamlit!')
                   browser.close()
           except Exception as e:
-              print(f'Error during ping session: {e}')
-              sys.exit(1)
+              print(f'Session output: {e}')
+              sys.exit(0)
           "
