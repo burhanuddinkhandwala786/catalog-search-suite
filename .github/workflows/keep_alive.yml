@@ -34,7 +34,6 @@ jobs:
                   page.goto('https://catalog-search-suite.streamlit.app', timeout=90000)
                   page.wait_for_timeout(5000)
 
-                  # Look for the 'Yes, get this app back up!' wake-up button
                   wake_button = page.query_selector('button:has-text(\"Yes, get this app back up!\")')
                   if wake_button:
                       print('App is asleep! Clicking wake-up button now...')
