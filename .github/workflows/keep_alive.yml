@@ -1,52 +1,26 @@
-name: Prevent Streamlit Hibernation Daily
+name: Keep Streamlit Alive via Git Commit
 
 on:
   schedule:
-    # Runs automatically EVERY DAY at 04:00 UTC
-    - cron: '0 4 * * *'
+    # Runs every 8 hours
+    - cron: '0 */8 * * *'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
-  keep_alive:
+  keep_alive_commit:
     runs-on: ubuntu-latest
     steps:
-      - name: Set up Python
-        uses: actions/setup-python@v4
+      - name: Checkout Code
+        uses: actions/checkout@v3
         with:
-          python-version: '3.10'
+          persist-credentials: true
 
-      - name: Install Playwright & Chromium Browser
+      - name: Make Empty Commit to Reset Streamlit Timer
         run: |
-          pip install playwright
-          playwright install chromium
-
-      - name: Simulate Daily Real User Visit & Wake Up App
-        run: |
-          python -c "
-          from playwright.sync_api import sync_playwright
-          import sys
-
-          try:
-              with sync_playwright() as p:
-                  browser = p.chromium.launch(headless=True)
-                  page = browser.new_page()
-                  print('Navigating directly to catalog-search-suite.streamlit.app...')
-                  page.goto('https://catalog-search-suite.streamlit.app', timeout=90000)
-                  page.wait_for_timeout(5000)
-
-                  wake_button = page.query_selector('button:has-text(\"Yes, get this app back up!\")')
-                  if wake_button:
-                      print('App is asleep! Clicking wake-up button now...')
-                      wake_button.click()
-                      print('Waiting 45 seconds for server container to fully boot...')
-                      page.wait_for_timeout(45000)
-                  else:
-                      print('App is already awake! Keeping connection active...')
-                      page.wait_for_timeout(10000)
-
-                  print('Successfully established active session with Streamlit!')
-                  browser.close()
-          except Exception as e:
-              print(f'Session output: {e}')
-              sys.exit(0)
-          "
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git commit --allow-empty -m "Chore: Keep-alive ping $(date)"
+          git push
