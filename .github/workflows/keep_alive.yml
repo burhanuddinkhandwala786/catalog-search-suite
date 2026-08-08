@@ -24,7 +24,7 @@ jobs:
 
       - name: Run Headless Streamlit Keep-Alive
         env:
-          STREAMLIT_URL: "catalog-search-suite.streamlit.app" # REPLACE THIS WITH YOUR REAL URL
+          STREAMLIT_URL: "https://catalog-search-suite.streamlit.app" # REPLACE THIS WITH YOUR REAL URL
         run: |
           python -c "
           import os, time
