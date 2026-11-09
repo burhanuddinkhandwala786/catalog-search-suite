@@ -9,7 +9,7 @@ on:
 
 jobs:
   sync:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -31,7 +31,7 @@ jobs:
           path: ~/.cache/torch/hub
           key: ${{ runner.os }}-torch-dinov2-vits14
           restore-keys: |
-            ${${ runner.os }}-torch-dinov2-
+            ${{ runner.os }}-torch-dinov2-
 
       - name: Pre-clone DINOv2 Repository (Bypasses 504 Timeout)
         run: |
