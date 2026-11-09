@@ -4,6 +4,7 @@ from PIL import Image, ImageOps
 from streamlit_cropper import st_cropper
 import io
 import os
+import time
 import requests
 import warnings
 from core_engine import AIVectorEngine, COLLECTION_NAME
@@ -209,15 +210,30 @@ def render_match_image(meta_dict):
 
 @st.cache_resource(show_spinner=False)
 def load_engine():
-    try:
-        return AIVectorEngine()
-    except Exception as e:
-        st.error(f"Engine connection failed: {e}")
-        return None
+    """Attempts to connect to AIVectorEngine with built-in retries to handle server wakeups."""
+    max_retries = 3
+    delay_seconds = 2
+    last_exception = None
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            eng = AIVectorEngine()
+            # Verify connectivity via a lightweight ping
+            if hasattr(eng, "client") and eng.client is not None:
+                _ = eng.client.get_collection(COLLECTION_NAME)
+            return eng, None
+        except Exception as e:
+            last_exception = e
+            if attempt < max_retries:
+                time.sleep(delay_seconds)
+
+    return None, str(last_exception)
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_cached_brands(_engine):
+    if _engine is None:
+        return []
     try:
         return _engine.get_all_brands()
     except Exception:
@@ -227,9 +243,11 @@ def get_cached_brands(_engine):
 @st.cache_data(ttl=600, show_spinner=False)
 def get_tab2_metrics(_engine):
     """Caches database count queries so app startup remains instant."""
+    if _engine is None or not hasattr(_engine, "client") or _engine.client is None:
+        return 0, 0, 0, []
     try:
         col_info = _engine.client.get_collection(COLLECTION_NAME)
-        total_vectors = col_info.points_count
+        total_vectors = getattr(col_info, "points_count", 0)
         
         scroll_res, _ = _engine.client.scroll(
             collection_name=COLLECTION_NAME,
@@ -252,7 +270,8 @@ def get_tab2_metrics(_engine):
         return 0, 0, 0, []
 
 
-engine = load_engine()
+# --- INITIALIZE BACKEND WITH FAILSAFE ---
+engine, engine_error = load_engine()
 
 st.markdown("""
 <div class="app-header">
@@ -260,6 +279,16 @@ st.markdown("""
     <div class="app-header-title">AI Catalog Search Engine</div>
 </div>
 """, unsafe_allow_html=True)
+
+# Display friendly recovery banner if remote host was asleep or reset connection
+if engine is None:
+    st.warning("⚠️ **Backend Search Engine is waking up or temporarily unavailable.**")
+    with st.expander("Connection diagnostic details"):
+        st.code(engine_error or "Unknown connection error", language="text")
+    if st.button("🔄 Reconnect Engine", use_container_width=True):
+        st.cache_resource.clear()
+        st.cache_data.clear()
+        st.rerun()
 
 tab1, tab2 = st.tabs(["🔍 Visual Pattern Search", "⚙️ Index Management"])
 
@@ -291,6 +320,8 @@ with tab1:
                             st.success("Sync triggered!")
                         else:
                             st.error(f"Failed: {res.status_code}")
+                else:
+                    st.error("Missing GITHUB_TOKEN secret.")
 
         with st.expander("⚙️ Search Sensitivity Controls", expanded=False):
             min_confidence_slider = st.slider(
@@ -364,74 +395,79 @@ with tab1:
                     proc_img = high_res_crop
 
                 with st.spinner("Searching neural database..."):
-                    query_vector = engine.get_single_embedding(proc_img)
-                    confidence_threshold = min_confidence_slider / 100.0
-                    
                     try:
-                        matches = engine.search(
-                            query_vector=query_vector, 
-                            top_k=25, 
-                            min_confidence=confidence_threshold,
-                            brand_filter=selected_company,
-                            keyword_filter=catalog_keyword
-                        )
-                    except TypeError:
-                        matches = engine.search(
-                            query_vector=query_vector, 
-                            top_k=25, 
-                            min_confidence=confidence_threshold
-                        )
-                    
-                    exact_matches = [m for m in matches if m["score"] >= 0.50]
-                    high_confidence_matches = [m for m in matches if confidence_threshold <= m["score"] < 0.50]
-                
-                st.markdown("<br>", unsafe_allow_html=True)
-                
-                if exact_matches:
-                    st.markdown("<h4 style='color:#0f172a; font-weight:700; font-size:1.05rem;'>🎯 Exact Match Results</h4>", unsafe_allow_html=True)
-                    for i, res in enumerate(exact_matches[:3]):
-                        score_pct = res["score"] * 100
-                        b_name = res['meta'].get('company', 'General')
-                        c_name = res['meta'].get('catalog', 'N/A')
-                        p_num = res['meta'].get('page', 1)
-                        st.markdown(f"""
-                        <div class="match-container-exact">
-                            <div class="match-header-tag tag-exact">
-                                <span>Direct Match #{i+1}</span> • <span>{score_pct:.1f}% Confidence</span>
-                            </div>
-                            <div class="meta-details-grid">
-                                <div class="meta-item-box">🏢 <strong>Brand:</strong> {b_name}</div>
-                                <div class="meta-item-box">📖 <strong>Catalog:</strong> {c_name}</div>
-                                <div class="meta-item-box">📄 <strong>Location:</strong> Page {p_num}</div>
-                            </div>
-                        </div>
-                        """, unsafe_allow_html=True)
-                        render_match_image(res["meta"])
-                        st.divider()
+                        query_vector = engine.get_single_embedding(proc_img)
+                        confidence_threshold = min_confidence_slider / 100.0
                         
-                elif high_confidence_matches:
-                    st.markdown("<h4 style='color:#0f172a; font-weight:700; font-size:1.05rem;'>🎨 High Confidence Alternatives</h4>", unsafe_allow_html=True)
-                    for i, res in enumerate(high_confidence_matches[:3]):
-                        score_pct = res["score"] * 100
-                        b_name = res['meta'].get('company', 'General')
-                        c_name = res['meta'].get('catalog', 'N/A')
-                        p_num = res['meta'].get('page', 1)
-                        st.markdown(f"""
-                        <div class="match-container-alt">
-                            <div class="match-header-tag tag-alt">
-                                <span>Candidate #{i+1}</span> • <span>{score_pct:.1f}% Visual Similarity</span>
-                            </div>
-                            <div class="meta-details-grid">
-                                <div class="meta-item-box">🏢 <strong>Brand:</strong> {b_name}</div>
-                                <div class="meta-item-box">📖 <strong>Catalog:</strong> {c_name}</div>
-                                <div class="meta-item-box">📄 <strong>Location:</strong> Page {p_num}</div>
-                            </div>
-                        </div>
-                        """, unsafe_allow_html=True)
-                        render_match_image(res["meta"])
-                        st.divider()
-                else:
-                    st.info(f"ℹ️ **No matching product found in current catalogs above {min_confidence_slider}% confidence.**")
+                        try:
+                            matches = engine.search(
+                                query_vector=query_vector, 
+                                top_k=25, 
+                                min_confidence=confidence_threshold,
+                                brand_filter=selected_company,
+                                keyword_filter=catalog_keyword
+                            )
+                        except TypeError:
+                            matches = engine.search(
+                                query_vector=query_vector, 
+                                top_k=25, 
+                                min_confidence=confidence_threshold
+                            )
+                        
+                        exact_matches = [m for m in matches if m.get("score", 0) >= 0.50]
+                        high_confidence_matches = [m for m in matches if confidence_threshold <= m.get("score", 0) < 0.50]
+                    
+                        st.markdown("<br>", unsafe_allow_html=True)
+                        
+                        if exact_matches:
+                            st.markdown("<h4 style='color:#0f172a; font-weight:700; font-size:1.05rem;'>🎯 Exact Match Results</h4>", unsafe_allow_html=True)
+                            for i, res in enumerate(exact_matches[:3]):
+                                score_pct = res["score"] * 100
+                                b_name = res['meta'].get('company', 'General')
+                                c_name = res['meta'].get('catalog', 'N/A')
+                                p_num = res['meta'].get('page', 1)
+                                st.markdown(f"""
+                                <div class="match-container-exact">
+                                    <div class="match-header-tag tag-exact">
+                                        <span>Direct Match #{i+1}</span> • <span>{score_pct:.1f}% Confidence</span>
+                                    </div>
+                                    <div class="meta-details-grid">
+                                        <div class="meta-item-box">🏢 <strong>Brand:</strong> {b_name}</div>
+                                        <div class="meta-item-box">📖 <strong>Catalog:</strong> {c_name}</div>
+                                        <div class="meta-item-box">📄 <strong>Location:</strong> Page {p_num}</div>
+                                    </div>
+                                </div>
+                                """, unsafe_allow_html=True)
+                                render_match_image(res["meta"])
+                                st.divider()
+                                
+                        elif high_confidence_matches:
+                            st.markdown("<h4 style='color:#0f172a; font-weight:700; font-size:1.05rem;'>🎨 High Confidence Alternatives</h4>", unsafe_allow_html=True)
+                            for i, res in enumerate(high_confidence_matches[:3]):
+                                score_pct = res["score"] * 100
+                                b_name = res['meta'].get('company', 'General')
+                                c_name = res['meta'].get('catalog', 'N/A')
+                                p_num = res['meta'].get('page', 1)
+                                st.markdown(f"""
+                                <div class="match-container-alt">
+                                    <div class="match-header-tag tag-alt">
+                                        <span>Candidate #{i+1}</span> • <span>{score_pct:.1f}% Visual Similarity</span>
+                                    </div>
+                                    <div class="meta-details-grid">
+                                        <div class="meta-item-box">🏢 <strong>Brand:</strong> {b_name}</div>
+                                        <div class="meta-item-box">📖 <strong>Catalog:</strong> {c_name}</div>
+                                        <div class="meta-item-box">📄 <strong>Location:</strong> Page {p_num}</div>
+                                    </div>
+                                </div>
+                                """, unsafe_allow_html=True)
+                                render_match_image(res["meta"])
+                                st.divider()
+                        else:
+                            st.info(f"ℹ️ **No matching product found in current catalogs above {min_confidence_slider}% confidence.**")
+                    except Exception as search_err:
+                        st.error(f"Error querying search index: {search_err}")
+    else:
+        st.info("Visual search is ready once the database engine connects.")
 
 with tab2:
     st.markdown("<h4 style='color:#0f172a; font-weight:700; font-size:1.05rem; margin-top:10px;'>⚡ Cloud Index & Fast PDF Lookup</h4>", unsafe_allow_html=True)
@@ -447,36 +483,40 @@ with tab2:
         with m_col3:
             st.metric(label="Searchable Vector Patches", value=f"{total_vectors:,}")
             
-    st.divider()
+        st.divider()
 
-    st.markdown("##### 🔎 Quick Catalog Keyword Search")
-    quick_kw = st.text_input("Search catalog name or brand directly:", placeholder="e.g. Louvers, Marbelo, Euro Pratik", key="quick_search_kw")
-    
-    if quick_kw:
-        if engine is not None:
-            scroll_res, _ = engine.client.scroll(
-                collection_name=COLLECTION_NAME,
-                scroll_filter={"must": [{"key": "catalog", "match": {"text": quick_kw.strip()}}]},
-                limit=10,
-                with_payload=True,
-                with_vectors=False
-            )
-            
-            if scroll_res:
-                st.success(f"Found {len(scroll_res)} catalog reference matches for '{quick_kw}':")
-                for point in scroll_res:
-                    meta = point.payload
-                    c_title = meta.get('catalog', '')
-                    b_title = meta.get('company', '')
-                    p_no = meta.get('page', 1)
-                    st.write(f"📖 Catalog: {c_title} | 🏢 Brand: {b_title} | 📄 Page: {p_no}")
-            else:
-                st.info(f"No catalog names matching '{quick_kw}' found in current index.")
+        st.markdown("##### 🔎 Quick Catalog Keyword Search")
+        quick_kw = st.text_input("Search catalog name or brand directly:", placeholder="e.g. Louvers, Marbelo, Euro Pratik", key="quick_search_kw")
+        
+        if quick_kw:
+            try:
+                scroll_res, _ = engine.client.scroll(
+                    collection_name=COLLECTION_NAME,
+                    scroll_filter={"must": [{"key": "catalog", "match": {"text": quick_kw.strip()}}]},
+                    limit=10,
+                    with_payload=True,
+                    with_vectors=False
+                )
+                
+                if scroll_res:
+                    st.success(f"Found {len(scroll_res)} catalog reference matches for '{quick_kw}':")
+                    for point in scroll_res:
+                        meta = point.payload
+                        c_title = meta.get('catalog', '')
+                        b_title = meta.get('company', '')
+                        p_no = meta.get('page', 1)
+                        st.write(f"📖 Catalog: {c_title} | 🏢 Brand: {b_title} | 📄 Page: {p_no}")
+                else:
+                    st.info(f"No catalog names matching '{quick_kw}' found in current index.")
+            except Exception as scroll_err:
+                st.error(f"Could not retrieve catalog list: {scroll_err}")
 
-    if 'catalog_list' in locals() and catalog_list:
-        with st.expander(f"📄 View All {len(catalog_list)} Currently Indexed PDF Files"):
-            for idx, cat_name in enumerate(catalog_list, 1):
-                st.write(f"{idx}. {cat_name}")
+        if 'catalog_list' in locals() and catalog_list:
+            with st.expander(f"📄 View All {len(catalog_list)} Currently Indexed PDF Files"):
+                for idx, cat_name in enumerate(catalog_list, 1):
+                    st.write(f"{idx}. {cat_name}")
+    else:
+        st.info("Index details and stats will load once the connection to the engine is established.")
 
     st.divider()
 
