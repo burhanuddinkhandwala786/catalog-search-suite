@@ -25,6 +25,21 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Cache Torch Hub Model Weights
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/torch/hub
+          key: ${{ runner.os }}-torch-dinov2-vits14
+          restore-keys: |
+            ${${ runner.os }}-torch-dinov2-
+
+      - name: Pre-clone DINOv2 Repository (Bypasses 504 Timeout)
+        run: |
+          mkdir -p ~/.cache/torch/hub
+          if [ ! -d ~/.cache/torch/hub/facebookresearch_dinov2_main ]; then
+            git clone --depth 1 https://github.com/facebookresearch/dinov2.git ~/.cache/torch/hub/facebookresearch_dinov2_main
+          fi
+
       - name: Run Drive Sync Engine (Pushes to Qdrant Cloud)
         env:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
