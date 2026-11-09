@@ -4,6 +4,7 @@ from PIL import Image
 import numpy as np
 import os
 import time
+import subprocess
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
     Distance,
@@ -49,7 +50,27 @@ def pad_to_square(pil_img: Image.Image, bg_color=(255, 255, 255)) -> Image.Image
 class AIVectorEngine:
     def __init__(self):
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.model = torch.hub.load("facebookresearch/dinov2", "dinov2_vits14").to(self.device)
+
+        # --- RESILIENT MODEL LOADER (Fixes HTTP 504 Gateway Timeout) ---
+        hub_dir = torch.hub.get_dir()
+        repo_dir = os.path.join(hub_dir, "facebookresearch_dinov2_main")
+
+        if not os.path.exists(repo_dir):
+            try:
+                subprocess.run(
+                    ["git", "clone", "--depth", "1", "https://github.com/facebookresearch/dinov2.git", repo_dir],
+                    check=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
+                )
+            except Exception:
+                pass
+
+        if os.path.exists(repo_dir):
+            self.model = torch.hub.load(repo_dir, "dinov2_vits14", source="local").to(self.device)
+        else:
+            self.model = torch.hub.load("facebookresearch/dinov2", "dinov2_vits14").to(self.device)
+
         self.model.eval()
 
         self.transform = T.Compose([
@@ -58,26 +79,30 @@ class AIVectorEngine:
             T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ])
 
+        # --- QDRANT CONNECTION CONFIGURATION ---
         qdrant_url = get_secret("QDRANT_URL")
         qdrant_api_key = get_secret("QDRANT_API_KEY")
 
         if not qdrant_url or not qdrant_api_key:
             raise ValueError("Missing QDRANT_URL or QDRANT_API_KEY credentials.")
 
-        # Sanitize URL: ensure https protocol and strip trailing slashes or ports that reset sockets
+        # Sanitize URL format
         qdrant_url = qdrant_url.rstrip("/")
         if not qdrant_url.startswith("http://") and not qdrant_url.startswith("https://"):
             qdrant_url = f"https://{qdrant_url}"
 
+        # Prevent gRPC port collision if accidentally copied from Qdrant console
+        if qdrant_url.endswith(":6334"):
+            qdrant_url = qdrant_url[:-5] + ":6333"
+
         # Initialize QdrantClient with strict REST/HTTPS (no gRPC) and extended timeouts
-        # prefer_grpc=False prevents [Errno 104] TCP resets on Streamlit Cloud & web proxies
         self.client = QdrantClient(
             url=qdrant_url,
             api_key=qdrant_api_key,
             prefer_grpc=False,
             timeout=60.0
         )
-        
+
         self._ensure_collection()
 
     def _ensure_collection(self):
@@ -176,7 +201,7 @@ class AIVectorEngine:
         for res in points:
             payload = getattr(res, "payload", {}) or {}
             page_num = payload.get("page", 1)
-            
+
             # Skip Cover Pages
             if page_num == 1:
                 continue
