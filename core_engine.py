@@ -3,8 +3,17 @@ import torchvision.transforms as T
 from PIL import Image
 import numpy as np
 import os
+import time
 from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, VectorParams, PointStruct, Filter, FieldCondition, MatchValue, MatchText
+from qdrant_client.models import (
+    Distance,
+    VectorParams,
+    PointStruct,
+    Filter,
+    FieldCondition,
+    MatchValue,
+    MatchText
+)
 
 COLLECTION_NAME = "catalog_embeddings"
 
@@ -13,12 +22,13 @@ def get_secret(key_name):
     """Safely retrieves secrets across both GitHub Actions (env) and Streamlit Cloud (secrets)."""
     val = os.environ.get(key_name)
     if val:
-        return val
+        return val.strip()
 
     try:
         import streamlit as st
         if hasattr(st, "secrets") and key_name in st.secrets:
-            return st.secrets[key_name]
+            raw_val = st.secrets[key_name]
+            return str(raw_val).strip() if raw_val else None
     except Exception:
         pass
 
@@ -54,17 +64,38 @@ class AIVectorEngine:
         if not qdrant_url or not qdrant_api_key:
             raise ValueError("Missing QDRANT_URL or QDRANT_API_KEY credentials.")
 
-        self.client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key)
+        # Sanitize URL: ensure https protocol and strip trailing slashes or ports that reset sockets
+        qdrant_url = qdrant_url.rstrip("/")
+        if not qdrant_url.startswith("http://") and not qdrant_url.startswith("https://"):
+            qdrant_url = f"https://{qdrant_url}"
+
+        # Initialize QdrantClient with strict REST/HTTPS (no gRPC) and extended timeouts
+        # prefer_grpc=False prevents [Errno 104] TCP resets on Streamlit Cloud & web proxies
+        self.client = QdrantClient(
+            url=qdrant_url,
+            api_key=qdrant_api_key,
+            prefer_grpc=False,
+            timeout=60.0
+        )
+        
         self._ensure_collection()
 
     def _ensure_collection(self):
-        """Creates the Qdrant vector collection if it doesn't already exist."""
-        collections = [c.name for c in self.client.get_collections().collections]
-        if COLLECTION_NAME not in collections:
-            self.client.create_collection(
-                collection_name=COLLECTION_NAME,
-                vectors_config=VectorParams(size=384, distance=Distance.COSINE)
-            )
+        """Creates the Qdrant vector collection if it doesn't already exist with connection retry."""
+        max_retries = 3
+        for attempt in range(1, max_retries + 1):
+            try:
+                collections = [c.name for c in self.client.get_collections().collections]
+                if COLLECTION_NAME not in collections:
+                    self.client.create_collection(
+                        collection_name=COLLECTION_NAME,
+                        vectors_config=VectorParams(size=384, distance=Distance.COSINE)
+                    )
+                return
+            except Exception as e:
+                if attempt == max_retries:
+                    raise e
+                time.sleep(2)
 
     def get_single_embedding(self, pil_image: Image.Image) -> list:
         padded_img = pad_to_square(pil_image)
@@ -105,7 +136,7 @@ class AIVectorEngine:
 
         query_filter = Filter(must=must_conditions) if must_conditions else None
 
-        # Execute Query
+        # Execute Query via query_points or legacy search
         if hasattr(self.client, "query_points"):
             try:
                 response = self.client.query_points(
@@ -160,6 +191,14 @@ class AIVectorEngine:
         return matches
 
     def get_all_brands(self) -> list:
-        scroll_res, _ = self.client.scroll(collection_name=COLLECTION_NAME, limit=10000, with_payload=["company"], with_vectors=False)
-        companies = set(point.payload.get("company", "General") for point in scroll_res if point.payload)
-        return sorted(list(companies))
+        try:
+            scroll_res, _ = self.client.scroll(
+                collection_name=COLLECTION_NAME,
+                limit=10000,
+                with_payload=["company"],
+                with_vectors=False
+            )
+            companies = set(point.payload.get("company", "General") for point in scroll_res if point.payload)
+            return sorted(list(companies))
+        except Exception:
+            return []
